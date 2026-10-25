@@ -1,0 +1,5 @@
+docs/
+poc/
+target/
+node_modules/
+dist/
