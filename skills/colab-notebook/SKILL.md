@@ -23,7 +23,10 @@ claude mcp add --transport http --scope user colab http://127.0.0.1:7761/mcp
 
 ## Rules
 
-- One logical step per cell. Prefer editing and re-running a cell over piling up near duplicates.
+- Work like a person in Colab: build the notebook incrementally, one small step per cell (imports, load data, inspect it, transform, train, evaluate, plot), and run each cell before writing the next so its output guides the next step. Never dump a whole script into one cell.
+- Keep cells short, roughly under 15 lines. Split anything longer into separate cells unless it is a single function or class.
+- End a cell with the value worth seeing (a `df.head()`, a shape, a metric) so the user follows along.
+- Fix a failing cell by editing and re-running it, not by appending a corrected copy below.
 - Outputs that are not text show as a mime tag like `[image/png]`; the user sees the real render in the app. Print numbers you need to reason about.
 - GPU and TPU runtimes spend the user's compute units: only connect one when asked.
 - Do not install packages, mount Drive or download big data without saying so first: it runs on the user's Colab runtime and quota.
