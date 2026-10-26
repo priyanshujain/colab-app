@@ -10,12 +10,14 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const RECONNECT_ATTEMPTS: u32 = 60;
+const MISSED_PINGS: u32 = 3;
+const LOG_HOOK: &str = include_str!("log_hook.py");
 
 enum Command {
     Send(tungstenite::Message),
@@ -28,6 +30,7 @@ struct Shared {
     executions: Mutex<HashMap<String, mpsc::UnboundedSender<Message>>>,
     events: broadcast::Sender<Message>,
     seen: Mutex<std::collections::VecDeque<String>>,
+    logged: Mutex<Option<u64>>,
 }
 
 impl Shared {
@@ -81,7 +84,7 @@ impl Colab {
 
 impl ColabKernel {
     pub fn connect(runtime: Arc<Runtime>, kernel_id: String, notebook: &Path) -> Self {
-        let shared = Arc::new(Shared { status: Mutex::new(KernelStatus::Connecting), executions: Mutex::default(), events: broadcast::channel(1024).0, seen: Mutex::default() });
+        let shared = Arc::new(Shared { status: Mutex::new(KernelStatus::Connecting), executions: Mutex::default(), events: broadcast::channel(1024).0, seen: Mutex::default(), logged: Mutex::default() });
         let (commands, rx) = mpsc::unbounded_channel();
         let session = uuid::Uuid::new_v4().to_string();
         tokio::spawn(run(runtime.clone(), kernel_id.clone(), session.clone(), shared.clone(), rx));
@@ -181,13 +184,18 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
             Err(_) => break,
         };
         failures = 0;
-        shared.set(KernelStatus::Idle);
+        shared.set(remote_status(&runtime, &kernel_id).await.unwrap_or(KernelStatus::Idle));
+        backfill(&runtime, &kernel_id, &shared).await;
         let (mut sink, mut stream) = ws.split();
         if let Some(frame) = unsent.take() && sink.send(frame.clone()).await.is_err() {
             unsent = Some(frame);
             continue;
         }
+        if let Ok(hook) = encode(log_hook(&session, &kernel_id)) && sink.send(hook).await.is_err() {
+            continue;
+        }
         let mut ping = tokio::time::interval(PING_INTERVAL);
+        let (mut heard, mut message) = (Instant::now(), Instant::now());
         loop {
             tokio::select! {
                 cmd = rx.recv() => match cmd {
@@ -216,6 +224,7 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
                 },
                 frame = stream.next() => match frame {
                     Some(Ok(frame @ (tungstenite::Message::Text(_) | tungstenite::Message::Binary(_)))) => {
+                        (heard, message) = (Instant::now(), Instant::now());
                         let Ok(msg) = decode(&frame) else { continue };
                         if let Some(reply) = colab_reply(&msg, &session) {
                             let _ = sink.send(tungstenite::Message::text(reply)).await;
@@ -223,15 +232,51 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
                         route(&shared, msg);
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | Some(Err(_)) | None => break,
-                    _ => {}
+                    _ => heard = Instant::now(),
                 },
-                _ = ping.tick() => if sink.send(tungstenite::Message::Ping(Default::default())).await.is_err() { break },
+                _ = ping.tick() => {
+                    if heard.elapsed() > PING_INTERVAL * MISSED_PINGS || sink.send(tungstenite::Message::Ping(Default::default())).await.is_err() {
+                        break;
+                    }
+                    let waiting = !shared.executions.lock().unwrap().is_empty();
+                    if waiting && message.elapsed() >= PING_INTERVAL && remote_status(&runtime, &kernel_id).await == Some(KernelStatus::Idle) {
+                        backfill(&runtime, &kernel_id, &shared).await;
+                        shared.set(KernelStatus::Idle);
+                        shared.executions.lock().unwrap().clear();
+                    }
+                }
             }
         }
         shared.set(KernelStatus::Reconnecting);
     }
     shared.set(KernelStatus::Disconnected);
     shared.executions.lock().unwrap().clear();
+}
+
+fn log_hook(session: &str, kernel_id: &str) -> Message {
+    let mut msg = Message::execute_request(session, &format!("{LOG_HOOK}\n_colab_app_log({:?})", log_path(kernel_id)));
+    msg.content["silent"] = true.into();
+    msg.content["store_history"] = false.into();
+    msg
+}
+
+fn log_path(kernel_id: &str) -> String {
+    format!("/tmp/colab-app/{kernel_id}.jsonl")
+}
+
+async fn backfill(runtime: &Runtime, kernel_id: &str, shared: &Shared) {
+    let Some(offset) = *shared.logged.lock().unwrap() else { return };
+    let Ok(Ok(text)) = tokio::time::timeout(PING_INTERVAL, runtime.file_from(&log_path(kernel_id), offset)).await else { return };
+    text.lines().filter_map(|line| serde_json::from_str(line).ok()).for_each(|msg| route(shared, msg));
+}
+
+async fn remote_status(runtime: &Runtime, kernel_id: &str) -> Option<KernelStatus> {
+    let kernel = tokio::time::timeout(PING_INTERVAL, runtime.jupyter(Method::GET, &format!("/api/kernels/{kernel_id}"))).await.ok()?.ok()?;
+    Some(match kernel["execution_state"].as_str()? {
+        "busy" => KernelStatus::Busy,
+        "dead" => KernelStatus::Dead,
+        _ => KernelStatus::Idle,
+    })
 }
 
 async fn open(runtime: &Runtime, kernel_id: &str, session: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
@@ -277,6 +322,10 @@ pub fn decode(frame: &tungstenite::Message) -> Result<Message> {
 }
 
 fn route(shared: &Shared, msg: Message) {
+    if let Some(offset) = msg.metadata.get("colab_app_log").and_then(|o| o.as_u64()) {
+        let mut logged = shared.logged.lock().unwrap();
+        *logged = Some(logged.map_or(offset, |l| l.max(offset)));
+    }
     {
         let mut seen = shared.seen.lock().unwrap();
         if seen.contains(&msg.header.msg_id) {

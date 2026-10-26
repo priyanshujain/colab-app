@@ -157,6 +157,13 @@ impl Runtime {
         let body = response.text().await?;
         Ok(if body.is_empty() { Value::Null } else { serde_json::from_str(&body)? })
     }
+
+    pub async fn file_from(&self, path: &str, offset: u64) -> Result<String> {
+        let (url, token) = self.url_and_token().await?;
+        let response = self.http.get(format!("{url}/files{path}")).header("X-Colab-Runtime-Proxy-Token", token).header("Range", format!("bytes={offset}-"))
+            .query(&[("authuser", "0")]).send().await?.error_for_status()?;
+        Ok(response.text().await?)
+    }
 }
 
 fn proxy(info: &ProxyInfo) -> Proxy {
