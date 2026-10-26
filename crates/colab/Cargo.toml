@@ -21,3 +21,4 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 keyring = { version = "3", features = ["apple-native"] }
 dirs = "6"
 url = "2"
+log = "0.4.34"

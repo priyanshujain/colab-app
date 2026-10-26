@@ -76,8 +76,10 @@ impl Colab {
         if let Some(token) = xsrf {
             req = req.header("X-Goog-Colab-Token", token);
         }
-        let response = req.send().await?;
+        let started = std::time::Instant::now();
+        let response = req.send().await.inspect_err(|e| log::warn!("colab {method} {path} failed after {:?}: {e:?}", started.elapsed()))?;
         let status = response.status();
+        log::info!("colab {method} {path} {status} in {:?}", started.elapsed());
         let body = response.text().await?;
         if !status.is_success() {
             bail!("{method} {path} failed with {status}: {}", body.chars().take(300).collect::<String>());
@@ -152,8 +154,11 @@ impl Runtime {
 
     pub async fn jupyter(&self, method: Method, path: &str) -> Result<Value> {
         let (url, token) = self.url_and_token().await?;
-        let response = self.http.request(method, format!("{url}{path}")).header("X-Colab-Runtime-Proxy-Token", token)
-            .query(&[("authuser", "0")]).send().await?.error_for_status()?;
+        let started = std::time::Instant::now();
+        let response = self.http.request(method.clone(), format!("{url}{path}")).header("X-Colab-Runtime-Proxy-Token", token)
+            .query(&[("authuser", "0")]).send().await.inspect_err(|e| log::warn!("runtime {method} {path} failed after {:?}: {e:?}", started.elapsed()))?;
+        log::info!("runtime {method} {path} {} in {:?}", response.status(), started.elapsed());
+        let response = response.error_for_status()?;
         let body = response.text().await?;
         Ok(if body.is_empty() { Value::Null } else { serde_json::from_str(&body)? })
     }

@@ -26,7 +26,7 @@ async fn open_notebook(handle: tauri::AppHandle, window: tauri::WebviewWindow, a
     }
     drop(window.set_title(std::path::Path::new(&opened.path).file_name().map_or("", |n| n.to_str().unwrap_or_default())));
     if let Err(e) = menu::opened(&handle, &opened.path, None) {
-        eprintln!("recent menu: {e:#}");
+        log::error!("recent menu: {e:#}");
     }
     Ok(Some(opened))
 }
@@ -41,7 +41,7 @@ async fn rename_notebook(handle: tauri::AppHandle, app: App<'_>, path: String, n
     let old = std::fs::canonicalize(&path).map_or(path.clone(), |p| p.to_string_lossy().into());
     let renamed = app.rename_notebook(&path, &new_name).await.map_err(err)?;
     if let Err(e) = menu::opened(&handle, &renamed, Some(&old)) {
-        eprintln!("recent menu: {e:#}");
+        log::error!("recent menu: {e:#}");
     }
     Ok(renamed)
 }
@@ -241,6 +241,7 @@ fn file_menu(window: tauri::Window, path: String) -> Result<()> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().level(log::LevelFilter::Info).level_for("rmcp", log::LevelFilter::Warn).level_for("tracing", log::LevelFilter::Warn).max_file_size(5_000_000).rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3)).timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .menu(menu::initial)
@@ -257,7 +258,7 @@ pub fn run() {
             app.manage(core.clone());
             let server = core.clone();
             tauri::async_runtime::spawn(async move { core.install_tools().await });
-            tauri::async_runtime::spawn(async move { crate::mcp::serve(server, crate::mcp::PORT).await.map_err(|e| eprintln!("mcp server: {e:#}")) });
+            tauri::async_runtime::spawn(async move { crate::mcp::serve(server, crate::mcp::PORT).await.map_err(|e| log::error!("mcp server: {e:#}")) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -271,7 +272,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
             #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => { let _ = windows::create(app, "").map_err(|e| eprintln!("new window: {e}")); }
+            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => { let _ = windows::create(app, "").map_err(|e| log::error!("new window: {e}")); }
             _ => {}
         });
 }

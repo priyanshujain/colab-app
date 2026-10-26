@@ -65,12 +65,12 @@ pub fn file_menu<R: Runtime>(window: &tauri::Window<R>, path: &str) -> tauri::Re
 pub fn clicked<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     let id = event.id().as_ref();
     if let Some(path) = id.strip_prefix("copy-path:") {
-        let _ = app.clipboard().write_text(path).map_err(|e| eprintln!("copy path: {e}"));
+        let _ = app.clipboard().write_text(path).map_err(|e| log::error!("copy path: {e}"));
     } else if let Some(path) = id.strip_prefix("reveal:") {
-        let _ = tauri_plugin_opener::reveal_item_in_dir(path).map_err(|e| eprintln!("reveal: {e}"));
+        let _ = tauri_plugin_opener::reveal_item_in_dir(path).map_err(|e| log::error!("reveal: {e}"));
     }
     if id == "new-window" {
-        let _ = crate::windows::create(app, "").map_err(|e| eprintln!("new window: {e}"));
+        let _ = crate::windows::create(app, "").map_err(|e| log::error!("new window: {e}"));
     } else if ["open", "clone", "settings"].contains(&id) || id.starts_with("open-recent:") {
         crate::windows::menu(app, id);
     }

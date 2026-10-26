@@ -40,3 +40,5 @@ rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamabl
 axum = "0.8.9"
 schemars = "1.2.3"
 reqwest = "0.13.5"
+tauri-plugin-log = "2.10.1"
+log = "0.4.34"

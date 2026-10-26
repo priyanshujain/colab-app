@@ -96,7 +96,7 @@ pub fn menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
         Some(window) => send(app, &window, id),
         None => create(app, id),
     };
-    let _ = result.map_err(|e| eprintln!("menu {id}: {e}"));
+    let _ = result.map_err(|e| log::error!("menu {id}: {e}"));
 }
 
 pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
@@ -108,7 +108,7 @@ pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
         Some(window) => send(app, &window, &format!("open-recent:{path}")),
         None => create(app, &format!("open-recent:{path}")),
     };
-    let _ = result.map_err(|e| eprintln!("agent open {path}: {e}"));
+    let _ = result.map_err(|e| log::error!("agent open {path}: {e}"));
 }
 
 pub fn closed<R: Runtime>(app: &AppHandle<R>, label: &str) {

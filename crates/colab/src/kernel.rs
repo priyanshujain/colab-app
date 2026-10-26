@@ -175,14 +175,19 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
         };
         let ws = match opened {
             Ok(ws) => ws,
-            Err(_) if failures < RECONNECT_ATTEMPTS => {
+            Err(e) if failures < RECONNECT_ATTEMPTS => {
+                log::warn!("kernel {kernel_id} websocket attempt {} failed: {e:#}", failures + 1);
                 failures += 1;
                 shared.set(KernelStatus::Reconnecting);
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
-            Err(_) => break,
+            Err(e) => {
+                log::error!("kernel {kernel_id} websocket gave up: {e:#}");
+                break;
+            }
         };
+        log::info!("kernel {kernel_id} websocket connected");
         failures = 0;
         shared.set(remote_status(&runtime, &kernel_id).await.unwrap_or(KernelStatus::Idle));
         backfill(&runtime, &kernel_id, &shared).await;

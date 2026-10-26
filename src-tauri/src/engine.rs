@@ -95,7 +95,7 @@ impl Core {
 
     pub async fn install_tools(&self) {
         if let Err(e) = self.tooling().await {
-            eprintln!("installing tools: {e:#}");
+            log::error!("installing tools: {e:#}");
         }
     }
 
@@ -149,10 +149,10 @@ impl Core {
         self.notebooks.lock().unwrap().insert(key.clone(), open.clone());
         let notebook = open.doc.notebook();
         let (core, o) = (self.clone(), open.clone());
-        tokio::spawn(async move { core.start_project(o).await.map_err(|e| eprintln!("tooling: {e:#}")) });
+        tokio::spawn(async move { core.start_project(o).await.map_err(|e| log::error!("tooling: {e:#}")) });
         if store::get(&store::default_path(), &canonical).ok().flatten().is_some() {
             let (core, o) = (self.clone(), open.clone());
-            tokio::spawn(async move { core.reattach(o).await.map_err(|e| eprintln!("reattach: {e:#}")) });
+            tokio::spawn(async move { core.reattach(o).await.map_err(|e| log::error!("reattach: {e:#}")) });
         }
         Ok(OpenedNotebook { path: key, notebook })
     }
@@ -552,6 +552,8 @@ impl Core {
 
     async fn start_kernel(self: &Arc<Self>, open: &Arc<Open>, choice: KernelChoice) -> Result<()> {
         self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Connecting, choice: Some(choice.clone()) });
+        log::info!("starting {choice:?} kernel for {}", open.key);
+        let clock = std::time::Instant::now();
         let started = async {
             Ok(match &choice {
                 KernelChoice::Local => {
@@ -565,10 +567,12 @@ impl Core {
         };
         match started.await {
             Ok(active) => {
+                log::info!("started {choice:?} kernel for {} in {:?}", open.key, clock.elapsed());
                 self.install(open, active, choice).await;
                 Ok(())
             }
             Err(e) => {
+                log::error!("starting {choice:?} kernel for {} failed after {:?}: {e:#}", open.key, clock.elapsed());
                 self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Disconnected, choice: None });
                 Err(e)
             }
@@ -847,7 +851,7 @@ impl Open {
         let _lock = self.sync.lock().await;
         let cells: Vec<(String, String)> = self.doc.notebook().cells.into_iter().filter(|c| c.cell_type == CellType::Code).map(|c| (c.id, c.source)).collect();
         if let Err(e) = project.sync(&self.path, &cells).await {
-            eprintln!("tooling sync: {e:#}");
+            log::error!("tooling sync: {e:#}");
             return Synced::new();
         }
         cells.into_iter().map(|(id, source)| (cell_uri(&self.path, &id), source)).collect()
