@@ -628,7 +628,7 @@ dependencies = [
 
 [[package]]
 name = "colab"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "colab-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2523,7 +2523,7 @@ dependencies = [
 
 [[package]]
 name = "kernel-local"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2791,7 +2791,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "nb"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "notify",
@@ -5326,7 +5326,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tooling"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "flate2",
