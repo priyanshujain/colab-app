@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, TitleBarStyle, WebviewUrl, Web
 pub struct Registry {
     notebooks: HashMap<String, String>,
     startup: HashMap<String, String>,
+    ready: HashSet<String>,
 }
 
 impl Registry {
@@ -25,9 +26,19 @@ impl Registry {
         !self.notebooks.contains_key(label) && !self.startup.contains_key(label)
     }
 
+    pub fn take_startup(&mut self, label: &str) -> Option<String> {
+        self.ready.insert(label.into());
+        self.startup.remove(label)
+    }
+
+    pub fn deliver(&mut self, label: &str, action: &str) -> bool {
+        self.ready.contains(label) || (self.startup.insert(label.into(), action.into()), false).1
+    }
+
     pub fn close(&mut self, label: &str) {
         self.notebooks.remove(label);
         self.startup.remove(label);
+        self.ready.remove(label);
     }
 }
 
@@ -48,7 +59,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, startup: &str) -> tauri::Result<()
 }
 
 pub fn startup<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String> {
-    registry(app).startup.remove(label)
+    registry(app).take_startup(label)
 }
 
 fn focus<R: Runtime>(app: &AppHandle<R>, label: &str) {
@@ -68,6 +79,11 @@ fn focus_owner<R: Runtime>(app: &AppHandle<R>, path: &str) -> bool {
     owner.map(|o| focus(app, &o)).is_some()
 }
 
+fn send<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>, action: &str) -> tauri::Result<()> {
+    let ready = registry(app).deliver(window.label(), action);
+    if ready { window.emit_to(window.label(), "menu", action) } else { Ok(()) }
+}
+
 fn focused<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
     app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
 }
@@ -77,7 +93,7 @@ pub fn menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
         return;
     }
     let result = match focused(app) {
-        Some(window) => window.emit_to(window.label(), "menu", id),
+        Some(window) => send(app, &window, id),
         None => create(app, id),
     };
     let _ = result.map_err(|e| eprintln!("menu {id}: {e}"));
@@ -89,7 +105,7 @@ pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
     }
     let blank = app.webview_windows().into_values().filter(|w| registry(app).is_blank(w.label())).max_by_key(|w| w.is_focused().unwrap_or(false));
     let result = match blank {
-        Some(window) => window.emit_to(window.label(), "menu", format!("open-recent:{path}")),
+        Some(window) => send(app, &window, &format!("open-recent:{path}")),
         None => create(app, &format!("open-recent:{path}")),
     };
     let _ = result.map_err(|e| eprintln!("agent open {path}: {e}"));
@@ -118,5 +134,18 @@ mod tests {
         assert!(r.is_blank("window-1"));
         assert_eq!(r.claim("window-3", "/nb/eval.ipynb"), None);
         assert_eq!(r.owner("/nb/eval.ipynb"), Some("window-3"));
+    }
+
+    #[test]
+    fn an_action_for_a_window_still_loading_waits_until_its_page_asks_for_it() {
+        let mut r = Registry::default();
+        assert!(!r.deliver("main", "open-recent:/nb/train.ipynb"));
+        assert!(!r.is_blank("main"));
+        assert_eq!(r.take_startup("main").as_deref(), Some("open-recent:/nb/train.ipynb"));
+        assert!(r.deliver("main", "open"));
+        assert_eq!(r.take_startup("main"), None);
+        assert_eq!(r.take_startup("window-1"), None);
+        r.close("main");
+        assert!(!r.deliver("main", "settings"));
     }
 }
