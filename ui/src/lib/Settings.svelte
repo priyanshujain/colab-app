@@ -15,6 +15,7 @@
     ['editor', 'Editor', 'How code and markdown cells behave while you edit.'],
     ['keyboard', 'Keyboard', 'Click a shortcut, then press the new key combination.'],
     ['account', 'Account', 'Your Google account for Colab runtimes.'],
+    ['secrets', 'Secrets', 'Saved in your macOS Keychain. Every notebook, local or Colab, gets them as environment variables and through google.colab.userdata.get.'],
     ['about', 'About', 'Version information.'],
   ] as const
   let section = $state<(typeof sections)[number][0]>('appearance')
@@ -25,11 +26,38 @@
   let version = $state('')
   let mono: string[] | null = $state(null)
   let fonts: string[] | null = $state(null)
+  let secrets = $state<{ name: string; saved: string; value: string; shown: boolean }[]>([])
+  let secretError = $state('')
   onMount(() => {
     api.listMonospaceFonts().then((f) => (mono = f), () => (mono = [settings.codeFont]))
     api.listFonts().then((f) => (fonts = f), () => (fonts = ['Inter']))
     api.version().then((v) => (version = v), () => {})
+    api.listSecrets().then((s) => (secrets = Object.entries(s).map(([name, value]) => ({ name, saved: name, value, shown: false }))), (e) => (secretError = String(e)))
   })
+
+  async function saveSecret(s: (typeof secrets)[number]) {
+    const name = s.name.trim()
+    if (!name) return
+    secretError = ''
+    try {
+      if (s.saved && s.saved !== name) await api.deleteSecret(s.saved)
+      await api.setSecret(name, s.value)
+      s.saved = s.name = name
+    } catch (e) {
+      secretError = String(e)
+    }
+  }
+
+  async function deleteSecret(i: number) {
+    const s = secrets[i]
+    secretError = ''
+    try {
+      if (s.saved) await api.deleteSecret(s.saved)
+      secrets.splice(i, 1)
+    } catch (e) {
+      secretError = String(e)
+    }
+  }
 
   async function signIn() {
     busy = true
@@ -138,6 +166,21 @@
         <label class="row"><span>Client id</span><input class="mono" bind:value={settings.clientId} placeholder="1234-abc.apps.googleusercontent.com" /></label>
         <label class="row"><span>Client secret</span><input class="mono" type="password" bind:value={settings.clientSecret} /></label>
       </div>
+    {:else if section === 'secrets'}
+      <div class="card">
+        {#each secrets as s, i (i)}
+          <div class="row secret">
+            <input class="mono" bind:value={s.name} onchange={() => saveSecret(s)} placeholder="NAME" aria-label="Name" />
+            <input class="mono" type={s.shown ? 'text' : 'password'} bind:value={s.value} onchange={() => saveSecret(s)} placeholder="Value" aria-label="Value" />
+            <button onclick={() => (s.shown = !s.shown)}>{s.shown ? 'Hide' : 'Show'}</button>
+            <button onclick={() => deleteSecret(i)}>Delete</button>
+          </div>
+        {:else}
+          <p class="muted">No secrets yet.</p>
+        {/each}
+        <div class="row"><button class="outline" onclick={() => secrets.push({ name: '', saved: '', value: '', shown: true })}>Add new secret</button></div>
+        {#if secretError}<p class="error">{secretError}</p>{/if}
+      </div>
     {:else}
       <div class="card">
         <h3>Colab Notebook</h3>
@@ -167,6 +210,8 @@
   .row > span { display: flex; flex-direction: column; gap: 2px; }
   small { color: var(--faint); font-size: 0.846rem; }
   .row input:not([type='checkbox']), .row select { width: min(260px, 50%); box-sizing: border-box; }
+  .row.secret { justify-content: flex-start; gap: 8px; }
+  .row.secret input { flex: 1; width: auto; min-width: 0; }
   .keys { display: flex; gap: 6px; align-items: center; }
   .combo { min-width: 120px; justify-content: center; font-family: var(--mono); font-size: 0.885rem; }
   .combo.recording { border-color: var(--accent); color: var(--accent); }

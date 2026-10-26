@@ -65,6 +65,13 @@ pub struct ConnectArgs {
     pub high_ram: bool,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct EnvArgs {
+    pub path: String,
+    /// Environment variables to set, as name to value
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
 type Reply = Result<String, String>;
 
 fn fail(e: anyhow::Error) -> String {
@@ -160,6 +167,13 @@ impl Server {
     async fn run_cell(&self, Parameters(a): Parameters<CellArgs>) -> Reply {
         let cell = self.core.agent_run(&a.path, &a.cell_id).await.map_err(fail)?;
         Ok(outputs(&cell))
+    }
+
+    #[tool(description = "Set environment variables in the notebook's kernel (local or Colab, starting the local kernel if needed) so code reads them with os.environ; they last until the kernel restarts. Secrets saved in the app's Settings are already set in every kernel")]
+    async fn set_env(&self, Parameters(a): Parameters<EnvArgs>) -> Reply {
+        let names = a.env.keys().cloned().collect::<Vec<_>>().join(", ");
+        self.core.set_env(&a.path, a.env).await.map_err(fail)?;
+        Ok(format!("set {names}"))
     }
 
     #[tool(description = "Interrupt the running cell of a notebook")]

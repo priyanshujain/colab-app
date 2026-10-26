@@ -680,6 +680,7 @@ dependencies = [
  "futures",
  "kernel",
  "kernel-local",
+ "keyring",
  "log",
  "nb",
  "reqwest",
@@ -698,6 +699,7 @@ dependencies = [
  "tooling",
  "ts-rs",
  "url",
+ "uuid",
 ]
 
 [[package]]

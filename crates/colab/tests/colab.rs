@@ -101,7 +101,7 @@ async fn next_json(ws: &mut Ws) -> Value {
 }
 
 #[tokio::test]
-async fn execution_survives_proxy_drop_with_stable_session_and_colab_requests_get_errors() {
+async fn execution_survives_proxy_drop_with_stable_session() {
     let mut proxy = Proxy::start().await;
     let kernel = proxy.kernel();
     let server = tokio::spawn(async move {
@@ -110,15 +110,6 @@ async fn execution_survives_proxy_drop_with_stable_session_and_colab_requests_ge
         assert_eq!(request["header"]["msg_type"], "execute_request");
         assert_eq!(first_query, format!("session_id={}", request["header"]["session"].as_str().unwrap()));
         ws.send(reply_to(&request, "stream", json!({"name": "stdout", "text": "epoch 1\n"}))).await.unwrap();
-        let mut colab = Message::new("colab_request", "server", json!({"request": {"authType": "dfs_ephemeral"}}));
-        colab.metadata = serde_json::from_value(json!({"colab_request_type": "request_auth", "colab_msg_id": 1})).unwrap();
-        ws.send(tungstenite::Message::text(serde_json::to_string(&colab).unwrap())).await.unwrap();
-        let reply = next_json(&mut ws).await;
-        assert_eq!((reply["channel"].clone(), reply["header"]["msg_type"].clone()), (json!("stdin"), json!("input_reply")));
-        assert_eq!(reply["header"]["session"], request["header"]["session"]);
-        assert_eq!(reply["content"]["value"]["type"], "colab_reply");
-        assert_eq!(reply["content"]["value"]["colab_msg_id"], 1);
-        assert!(reply["content"]["value"]["error"].is_string());
         drop(ws);
         let (mut ws, second_query) = proxy.accept().await;
         assert_eq!(second_query, first_query);

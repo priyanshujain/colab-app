@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dev-dependencies]
 tempfile = "3"
 dirs = "6"
+uuid.workspace = true
 rmcp = { version = "3.7.0", features = ["client", "transport-streamable-http-client-reqwest"] }
 
 [build-dependencies]
@@ -42,3 +43,4 @@ schemars = "1.2.3"
 reqwest = "0.13.5"
 tauri-plugin-log = "2.10.1"
 log = "0.4.34"
+keyring = { version = "3", features = ["apple-native"] }

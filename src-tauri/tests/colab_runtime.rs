@@ -152,3 +152,29 @@ async fn connecting_after_detach_reuses_the_detached_runtime_instead_of_assignin
     assert_eq!(outputs[0]["data"]["text/plain"], "4321", "variables were lost, so this is not the detached runtime");
     eprintln!("reconnected in {connected_in:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "assigns a real free CPU Colab runtime"]
+async fn colab_runtime_reads_app_secrets_through_its_own_userdata_and_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s3.ipynb");
+    let read = "import os\nfrom google.colab import userdata\nprint(userdata.get('HF_TOKEN'), os.environ['HF_TOKEN'], os.environ['BUCKET'])\ntry:\n    userdata.get('NOPE')\nexcept userdata.SecretNotFoundError as e:\n    print(e)";
+    let nb = json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": [{"cell_type": "code", "id": "c", "metadata": {}, "execution_count": null, "outputs": [], "source": read}]});
+    std::fs::write(&path, nb.to_string()).unwrap();
+    let events = Events::default();
+    let sink = events.clone();
+    let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
+    let service = format!("colab-app-test-{}", uuid::Uuid::new_v4());
+    let app = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), &service);
+    app.set_secret("HF_TOKEN", "hf_abc123").await.unwrap();
+    let p = app.open_notebook(path.to_str().unwrap()).await.unwrap().path;
+    app.select_kernel(&p, KernelChoice::Colab { variant: Variant::Default, accelerator: None, high_ram: false }).await.unwrap();
+    idle(&events).await;
+    app.set_env(&p, [("BUCKET".to_string(), "s3://team".to_string())].into()).await.unwrap();
+    app.run_cell(&p, "c").await.unwrap();
+    let cell = app.notebook(&p).unwrap().cells[0].clone();
+    app.release(&p).await.unwrap();
+    keyring::Entry::new(&service, "secrets").unwrap().delete_credential().unwrap();
+    let text: String = cell.outputs.unwrap().iter().map(|o| serde_json::to_value(o).unwrap()).map(|o| o["text"].as_str().map(String::from).unwrap_or_else(|| o.to_string())).collect();
+    assert_eq!(text, "hf_abc123 hf_abc123 s3://team\nSecret NOPE does not exist.\n");
+}

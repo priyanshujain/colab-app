@@ -120,6 +120,21 @@ impl Message {
         msg
     }
 
+    pub fn colab_reply(&self, reply: Result<Value, String>) -> Option<Self> {
+        if self.header.msg_type != "colab_request" {
+            return None;
+        }
+        let mut value = json!({"type": "colab_reply", "colab_msg_id": self.metadata.get("colab_msg_id")?});
+        match reply {
+            Ok(data) => value["data"] = data,
+            Err(e) => value["error"] = e.into(),
+        }
+        let mut msg = Self::new("input_reply", &self.header.session, json!({"value": value}));
+        msg.parent_header = Some(self.header.clone());
+        msg.channel = Some(Channel::Stdin);
+        Some(msg)
+    }
+
     pub fn typed(&self) -> Content {
         serde_json::from_value(json!({"msg_type": self.header.msg_type, "content": self.content}))
             .unwrap_or(Content::Other)

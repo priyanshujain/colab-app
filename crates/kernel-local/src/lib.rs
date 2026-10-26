@@ -118,19 +118,21 @@ pub struct LocalKernel {
     tx: broadcast::Sender<Message>,
     status: Arc<Mutex<KernelStatus>>,
     executions: Arc<Mutex<HashSet<String>>>,
+    env: Vec<(String, String)>,
 }
 
 impl LocalKernel {
-    pub async fn start(notebook: &Path, uv: Option<&Path>) -> anyhow::Result<Self> {
+    pub async fn start(notebook: &Path, uv: Option<&Path>, env: Vec<(String, String)>) -> anyhow::Result<Self> {
         let root = project_root(notebook);
         let python = ensure_env(uv.unwrap_or(Path::new("uv")), &root).await?;
-        Self::launch(python, root).await
+        Self::launch(python, root, env).await
     }
 
-    pub async fn launch(python: PathBuf, cwd: PathBuf) -> anyhow::Result<Self> {
+    pub async fn launch(python: PathBuf, cwd: PathBuf, env: Vec<(String, String)>) -> anyhow::Result<Self> {
         let kernel = Self {
             python,
             cwd,
+            env,
             session: uuid::Uuid::new_v4().to_string(),
             conn: Default::default(),
             tx: broadcast::channel(4096).0,
@@ -150,7 +152,7 @@ impl LocalKernel {
             "transport": "tcp", "ip": "127.0.0.1", "signature_scheme": "hmac-sha256", "key": key,
             "shell_port": ports[0], "iopub_port": ports[1], "stdin_port": ports[2], "control_port": ports[3], "hb_port": ports[4],
         }))?)?;
-        let child = Command::new(&self.python).args(["-m", "ipykernel_launcher", "-f"]).arg(&file).env("JPY_PARENT_PID", std::process::id().to_string())
+        let child = Command::new(&self.python).args(["-m", "ipykernel_launcher", "-f"]).arg(&file).env("JPY_PARENT_PID", std::process::id().to_string()).envs(self.env.clone())
             .current_dir(&self.cwd).stdin(Stdio::null()).stdout(Stdio::null()).kill_on_drop(true).spawn().context("starting ipykernel")?;
         let url = |p: u16| format!("tcp://127.0.0.1:{p}");
         let key = key.into_bytes();

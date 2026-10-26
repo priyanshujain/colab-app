@@ -32,6 +32,8 @@ const generated = (n: number): Cell[] =>
 
 const library = '"""Mock numpy."""\n\n\ndef arange(start, stop=None, step=1, dtype=None):\n    """Return evenly spaced values within a given interval."""\n    ...\n\n\nclass ndarray:\n    def mean(self, axis=None):\n        ...\n'
 
+const secrets: Record<string, string> = { HF_TOKEN: 'hf_mock' }
+
 export function mockApi(): Api {
   const params = new URLSearchParams(location.search)
   const count = Number(params.get('cells'))
@@ -214,6 +216,9 @@ export function mockApi(): Api {
     readFile: async (p) => (p.includes('numpy') ? library : `# ${p}\n`),
     sendInput: async (_, value) => { reply?.(value); reply = null },
     fileMenu: async () => {},
+    listSecrets: async () => ({ ...secrets }),
+    setSecret: async (name, value) => { secrets[name] = value },
+    deleteSecret: async (name) => { delete secrets[name] },
     pickNotebook: async () => prompt('Notebook path', 'sample.ipynb'),
     pickSave: async (d) => prompt('Save to', d),
     onCellOutputs: sub(outputs),

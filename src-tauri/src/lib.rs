@@ -4,6 +4,7 @@ pub mod ipc;
 pub mod mcp;
 mod menu;
 mod outputs;
+pub mod secrets;
 mod windows;
 
 use crate::engine::Core;
@@ -235,6 +236,21 @@ async fn send_input(app: App<'_>, path: String, value: String) -> Result<()> {
 }
 
 #[tauri::command]
+async fn list_secrets(app: App<'_>) -> Result<std::collections::BTreeMap<String, String>> {
+    app.list_secrets().await.map_err(err)
+}
+
+#[tauri::command]
+async fn set_secret(app: App<'_>, name: String, value: String) -> Result<()> {
+    app.set_secret(&name, &value).await.map_err(err)
+}
+
+#[tauri::command]
+async fn delete_secret(app: App<'_>, name: String) -> Result<()> {
+    app.delete_secret(&name).await.map_err(err)
+}
+
+#[tauri::command]
 fn file_menu(window: tauri::Window, path: String) -> Result<()> {
     menu::file_menu(&window, &path).map_err(|e| e.to_string())
 }
@@ -264,7 +280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_notebook, rename_notebook, edit_cell, run_cell, run_all, interrupt, restart, select_kernel, kernel_state, send_comm,
             sign_in, sign_out, auth_state, colab_info, list_runtimes, detach, release, clone_link,
-            completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu, window_startup
+            completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu, window_startup, list_secrets, set_secret, delete_secret
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

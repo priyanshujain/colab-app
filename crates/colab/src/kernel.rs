@@ -4,9 +4,8 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::{SinkExt, StreamExt};
-use kernel::{Channel, Content, ExecutionState, Execution, Kernel, KernelStatus, Message};
+use kernel::{Content, ExecutionState, Execution, Kernel, KernelStatus, Message};
 use reqwest::Method;
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -231,9 +230,6 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
                     Some(Ok(frame @ (tungstenite::Message::Text(_) | tungstenite::Message::Binary(_)))) => {
                         (heard, message) = (Instant::now(), Instant::now());
                         let Ok(msg) = decode(&frame) else { continue };
-                        if let Some(reply) = colab_reply(&msg, &session) {
-                            let _ = sink.send(tungstenite::Message::text(reply)).await;
-                        }
                         route(&shared, msg);
                     }
                     Some(Ok(tungstenite::Message::Close(_))) | Some(Err(_)) | None => break,
@@ -361,22 +357,11 @@ fn route(shared: &Shared, msg: Message) {
     }
 }
 
-pub fn colab_reply(msg: &Message, session: &str) -> Option<String> {
-    if msg.header.msg_type != "colab_request" {
-        return None;
-    }
-    let id = msg.metadata.get("colab_msg_id")?.clone();
-    let kind = msg.metadata.get("colab_request_type").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let value = json!({"type": "colab_reply", "colab_msg_id": id, "error": format!("{kind} is not supported by this app")});
-    let mut reply = Message::new("input_reply", session, json!({"value": value}));
-    reply.parent_header = Some(msg.header.clone());
-    reply.channel = Some(Channel::Stdin);
-    serde_json::to_string(&reply).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::Channel;
+    use serde_json::json;
 
     #[test]
     fn binary_frames_round_trip_widget_buffers() {

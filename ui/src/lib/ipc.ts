@@ -56,6 +56,9 @@ export interface Api {
   renameNotebook(path: string, newName: string): Promise<string>
   sendInput(path: string, value: string): Promise<void>
   fileMenu(path: string): Promise<void>
+  listSecrets(): Promise<Record<string, string>>
+  setSecret(name: string, value: string): Promise<void>
+  deleteSecret(name: string): Promise<void>
   pickNotebook(): Promise<string | null>
   pickSave(defaultPath: string): Promise<string | null>
   onCellOutputs(cb: (e: CellOutputs) => void): Promise<Unlisten>
@@ -115,6 +118,9 @@ async function tauriApi(): Promise<Api> {
     renameNotebook: (path, newName) => invoke('rename_notebook', { path, newName }),
     sendInput: (path, value) => invoke('send_input', { path, value }),
     fileMenu: (path) => invoke('file_menu', { path }),
+    listSecrets: () => invoke('list_secrets'),
+    setSecret: (name, value) => invoke('set_secret', { name, value }),
+    deleteSecret: (name) => invoke('delete_secret', { name }),
     pickNotebook: async () => (await dialog.open({ filters, multiple: false, directory: false })) as string | null,
     pickSave: (defaultPath) => dialog.save({ defaultPath, filters }),
     onCellOutputs: on('cell-outputs'),

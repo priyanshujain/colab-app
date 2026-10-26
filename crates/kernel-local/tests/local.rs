@@ -16,7 +16,7 @@ async fn local_kernel_lifecycle_in_uv_project() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname = \"demo\"\nversion = \"0.1.0\"\nrequires-python = \">=3.10\"\n").unwrap();
     std::fs::create_dir(dir.path().join("notebooks")).unwrap();
-    let k = LocalKernel::start(&dir.path().join("notebooks/a.ipynb"), None).await.unwrap();
+    let k = LocalKernel::start(&dir.path().join("notebooks/a.ipynb"), None, vec![]).await.unwrap();
     assert!(dir.path().join(".venv/bin/python").exists());
     assert_eq!(k.status(), KernelStatus::Idle);
     assert!(std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap().contains("ipykernel"));
@@ -53,7 +53,7 @@ async fn local_kernel_lifecycle_in_uv_project() {
 #[tokio::test]
 async fn kernel_exits_when_the_app_process_dies() {
     if let Ok(dir) = std::env::var("HOLD_KERNEL_IN") {
-        let k = LocalKernel::start(&std::path::Path::new(&dir).join("a.ipynb"), None).await.unwrap();
+        let k = LocalKernel::start(&std::path::Path::new(&dir).join("a.ipynb"), None, vec![]).await.unwrap();
         println!("KERNEL_PID {}", stdout(&run(&k, "import os\nprint(os.getpid())").await).trim());
         return std::future::pending().await;
     }

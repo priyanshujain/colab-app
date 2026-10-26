@@ -1,5 +1,6 @@
 use crate::ipc::{self, *};
 use crate::outputs;
+use crate::secrets::Secrets;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use anyhow::{Context, Result, anyhow, bail};
 use colab::{Auth, AuthError, Colab, ColabKernel, OAuthClient, store};
@@ -10,7 +11,7 @@ use kernel_local::LocalKernel;
 use nb::{Cell, CellType, NotebookDoc};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::{Duration, Instant};
@@ -18,6 +19,7 @@ use tokio::sync::{Mutex, OnceCell, RwLock, watch};
 use tooling::{CodeAction, Project, Tooling, cell_uri, text_edits};
 
 const FRAME: Duration = Duration::from_millis(33);
+const USERDATA: &str = include_str!("shim/userdata.py");
 
 pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
@@ -70,6 +72,7 @@ pub struct Core {
     tooling: OnceCell<Arc<Tooling>>,
     auth: Mutex<Option<Arc<Auth>>>,
     auth_state: StdMutex<Option<String>>,
+    secrets: Arc<Secrets>,
 }
 
 fn colab_variant(v: ipc::Variant) -> colab::Variant {
@@ -90,7 +93,72 @@ fn ipc_variant(v: &Value) -> ipc::Variant {
 
 impl Core {
     pub fn new(emit: Emit, data_dir: PathBuf) -> Arc<Self> {
-        Arc::new(Self { emit, data_dir, notebooks: Default::default(), tooling: OnceCell::new(), auth: Mutex::new(None), auth_state: Default::default() })
+        Self::with_secrets(emit, data_dir, "Colab Notebook secrets")
+    }
+
+    pub fn with_secrets(emit: Emit, data_dir: PathBuf, service: &str) -> Arc<Self> {
+        let secrets = Arc::new(Secrets::new(service));
+        Arc::new(Self { emit, data_dir, notebooks: Default::default(), tooling: OnceCell::new(), auth: Mutex::new(None), auth_state: Default::default(), secrets })
+    }
+
+    pub async fn list_secrets(&self) -> Result<BTreeMap<String, String>> {
+        let secrets = self.secrets.clone();
+        tokio::task::spawn_blocking(move || secrets.list()).await?
+    }
+
+    pub async fn set_secret(&self, name: &str, value: &str) -> Result<()> {
+        let (secrets, n, v) = (self.secrets.clone(), name.to_string(), value.to_string());
+        tokio::task::spawn_blocking(move || secrets.set(&n, &v)).await??;
+        self.push_env(&format!("__import__('os').environ[{}] = {}", py(name), py(value))).await;
+        Ok(())
+    }
+
+    pub async fn delete_secret(&self, name: &str) -> Result<()> {
+        let (secrets, n) = (self.secrets.clone(), name.to_string());
+        tokio::task::spawn_blocking(move || secrets.delete(&n)).await??;
+        self.push_env(&format!("__import__('os').environ.pop({}, None)", py(name))).await;
+        Ok(())
+    }
+
+    async fn push_env(&self, code: &str) {
+        let open: Vec<Arc<Open>> = self.notebooks.lock().unwrap().values().cloned().collect();
+        for o in open {
+            if o.kernel.read().await.is_some() && let Err(e) = o.kernel_send(silent(code)).await {
+                log::error!("updating env of {}: {e:#}", o.key);
+            }
+        }
+    }
+
+    pub async fn set_env(self: &Arc<Self>, path: &str, env: BTreeMap<String, String>) -> Result<()> {
+        if let Some(bad) = env.keys().find(|k| k.is_empty() || k.contains(['=', '\0'])) {
+            bail!("invalid environment variable name: {bad:?}");
+        }
+        let open = self.get(path)?;
+        self.ensure_kernel(&open).await?;
+        open.kernel_send(silent(&env_code(&env))).await
+    }
+
+    async fn apply_secrets(&self, open: &Open) {
+        match self.list_secrets().await {
+            Ok(env) if env.is_empty() => {}
+            Ok(env) => drop(open.kernel_send(silent(&env_code(&env))).await.map_err(|e| log::error!("applying secrets to {}: {e:#}", open.key))),
+            Err(e) => log::error!("reading secrets: {e:#}"),
+        }
+    }
+
+    fn colab_request(&self, open: &Arc<Open>, msg: Message) {
+        let (secrets, open) = (self.secrets.clone(), open.clone());
+        tokio::spawn(async move {
+            let kind = msg.metadata.get("colab_request_type").and_then(Value::as_str).unwrap_or("unknown").to_string();
+            let key = msg.content["request"]["key"].as_str().map(String::from);
+            let reply = match (kind.as_str(), key) {
+                ("GetSecret", Some(key)) => tokio::task::spawn_blocking(move || secrets.lookup(&key)).await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| format!("{e:#}"))),
+                _ => Err(format!("{kind} is not supported by this app")),
+            };
+            if let Some(reply) = msg.colab_reply(reply) && let Err(e) = open.kernel_send(reply).await {
+                log::error!("colab reply for {}: {e:#}", open.key);
+            }
+        });
     }
 
     pub async fn install_tools(&self) {
@@ -354,7 +422,7 @@ impl Core {
         Ok(())
     }
 
-    async fn execute(&self, open: &Open, cell_id: &str) -> Result<bool> {
+    async fn execute(&self, open: &Arc<Open>, cell_id: &str) -> Result<bool> {
         let Some(source) = open.doc.notebook().cell(cell_id).filter(|c| c.cell_type == CellType::Code).map(|c| c.source.clone()) else {
             return Ok(true);
         };
@@ -411,7 +479,11 @@ impl Core {
         Ok(ok)
     }
 
-    fn handle(&self, open: &Open, cell_id: &str, clear_wait: &mut bool, msg: Message) -> bool {
+    fn handle(&self, open: &Arc<Open>, cell_id: &str, clear_wait: &mut bool, msg: Message) -> bool {
+        if msg.header.msg_type == "colab_request" {
+            self.colab_request(open, msg);
+            return false;
+        }
         let content = msg.typed();
         match content {
             Content::ExecuteInput { execution_count, .. } => {
@@ -512,8 +584,9 @@ impl Core {
     pub async fn restart(&self, path: &str) -> Result<()> {
         let open = self.get(path)?;
         open.cancel.send_modify(|n| *n += 1);
-        let guard = open.kernel.read().await;
-        guard.as_ref().context("no kernel selected")?.active.k().restart().await
+        open.kernel.read().await.as_ref().context("no kernel selected")?.active.k().restart().await?;
+        self.apply_secrets(&open).await;
+        Ok(())
     }
 
     async fn drop_kernel(&self, open: &Open, release: bool) -> Result<()> {
@@ -577,7 +650,11 @@ impl Core {
             Ok(match &choice {
                 KernelChoice::Local => {
                     let uv = self.tooling().await?.tools().uv.clone();
-                    Active::Local(LocalKernel::start(&open.path, Some(&uv)).await?)
+                    let shim = self.data_dir.join("python");
+                    std::fs::create_dir_all(shim.join("google/colab"))?;
+                    std::fs::write(shim.join("google/colab/__init__.py"), "")?;
+                    std::fs::write(shim.join("google/colab/userdata.py"), USERDATA)?;
+                    Active::Local(LocalKernel::start(&open.path, Some(&uv), vec![("PYTHONPATH".into(), shim.to_string_lossy().into())]).await?)
                 }
                 KernelChoice::Colab { variant, accelerator, high_ram } => {
                     Active::Colab(self.colab().await?.start(&open.path, colab_variant(*variant), accelerator.as_deref(), *high_ram).await?)
@@ -604,6 +681,10 @@ impl Core {
         let comms = tokio::spawn(async move {
             while let Some(msg) = messages.next().await {
                 let Some(open) = weak.upgrade() else { return };
+                if msg.header.msg_type == "colab_request" {
+                    core.colab_request(&open, msg);
+                    continue;
+                }
                 match msg.typed() {
                     Content::CommOpen { .. } | Content::CommMsg { .. } | Content::CommClose { .. } => core.emit_comm(&open, &msg),
                     Content::UpdateDisplayData { data, metadata, transient } => {
@@ -615,6 +696,7 @@ impl Core {
         });
         let status = tokio::spawn(watch_status(self.clone(), Arc::downgrade(open)));
         *open.kernel.write().await = Some(Session { active, choice, _tasks: Tasks(vec![comms, status]) });
+        self.apply_secrets(open).await;
     }
 
     async fn reattach(self: Arc<Self>, open: Arc<Open>) -> Result<()> {
@@ -910,4 +992,19 @@ async fn watch_status(core: Arc<Core>, weak: Weak<Open>) {
         drop(open);
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+}
+
+fn py(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_default()
+}
+
+fn env_code(env: &BTreeMap<String, String>) -> String {
+    format!("__import__('os').environ.update(__import__('json').loads({}))", py(&serde_json::to_string(env).unwrap_or_default()))
+}
+
+fn silent(code: &str) -> Message {
+    let mut msg = Message::execute_request("", code);
+    msg.content["silent"] = true.into();
+    msg.content["store_history"] = false.into();
+    msg
 }

@@ -51,7 +51,11 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     assert!(focus && shown, "app was not told to show the inserted cell");
 
     assert_eq!(call("run_cell", json!({"path": p, "cell_id": "setup"})).await, (String::new(), false));
-    assert_eq!(call("run_cell", json!({"path": p, "cell_id": id})).await, ("sorted [1, 2, 3]\n30".into(), false));
+    assert_eq!(call("set_env", json!({"path": p, "env": {"S3_BUCKET": "s3://team-data", "AWS_REGION": "ap-south-1"}})).await, ("set AWS_REGION, S3_BUCKET".into(), false));
+    let (err_text, err) = call("set_env", json!({"path": p, "env": {"A=B": "x"}})).await;
+    assert!(err && err_text.contains("invalid environment variable name"), "{err_text}");
+    assert_eq!(call("edit_cell", json!({"path": p, "cell_id": id, "source": "import os\ndata.sort()\nprint('sorted', data, os.environ['S3_BUCKET'], os.environ['AWS_REGION'])\ndata[-1] * 10"})).await.1, false);
+    assert_eq!(call("run_cell", json!({"path": p, "cell_id": id})).await, ("sorted [1, 2, 3] s3://team-data ap-south-1\n30".into(), false));
     let streamed = events.lock().unwrap().iter().any(|(n, v)| n == "cell-outputs" && v["cell_id"] == id.as_str() && v["running"] == false && v["execution_count"] == 2);
     assert!(streamed, "outputs were not streamed to the app");
 
