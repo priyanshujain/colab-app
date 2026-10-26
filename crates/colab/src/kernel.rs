@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const RECONNECT_ATTEMPTS: u32 = 60;
 const MISSED_PINGS: u32 = 3;
+const KERNEL_CREATE_RETRIES: u32 = 10;
 const LOG_HOOK: &str = include_str!("log_hook.py");
 
 enum Command {
@@ -51,7 +52,15 @@ impl Colab {
     pub async fn start(&self, notebook: &Path, variant: Variant, accelerator: Option<&str>, high_ram: bool) -> Result<ColabKernel> {
         let a = self.assign(variant, accelerator, high_ram).await?;
         let runtime = Arc::new(Runtime::new(self.clone(), a.endpoint.clone(), &a.runtime_proxy_info));
-        match runtime.jupyter(Method::POST, "/api/kernels").await {
+        let mut created = runtime.jupyter(Method::POST, "/api/kernels").await;
+        for _ in 0..KERNEL_CREATE_RETRIES {
+            let booting = created.as_ref().err().and_then(|e| e.downcast_ref::<reqwest::Error>()).and_then(|e| e.status()).is_some_and(|s| s.is_server_error());
+            if !booting { break }
+            log::warn!("runtime {} is not ready to create a kernel yet: {:#}", a.endpoint, created.as_ref().unwrap_err());
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            created = runtime.jupyter(Method::POST, "/api/kernels").await;
+        }
+        match created {
             Ok(k) if k["id"].is_string() => {
                 let kernel_id = k["id"].as_str().unwrap().to_string();
                 store::save(&store::default_path(), notebook, &store::Saved { endpoint: a.endpoint.clone(), kernel_id: kernel_id.clone() })?;
