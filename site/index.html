@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colab Notebook</title>
+<meta name="description" content="A fast native Mac app for Jupyter notebooks on Google Colab runtimes, built so Claude Code can drive your notebooks while you watch.">
+<style>
+  :root { color-scheme: dark; --bg: #111214; --fg: #e8e8ea; --muted: #9a9ca3; --accent: #4a7bd0; --code: #1c1d21; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 72px 24px 96px; }
+  h1 { font-size: 2.6rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.35rem; margin: 56px 0 8px; }
+  p, li { color: #c9cad0; }
+  .lead { font-size: 1.2rem; color: var(--muted); margin: 0 0 28px; }
+  .cta { display: inline-block; background: var(--accent); color: #fff; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-right: 12px; }
+  .link { color: var(--fg); }
+  img { width: 100%; margin: 40px 0 8px; border-radius: 12px; box-shadow: 0 20px 60px #0009; }
+  .caption { font-size: 0.9rem; color: var(--muted); text-align: center; }
+  code, pre { font-family: "JetBrains Mono", Menlo, monospace; font-size: 0.85rem; }
+  pre { background: var(--code); padding: 14px 16px; border-radius: 8px; overflow-x: auto; color: var(--fg); }
+  p code, li code { background: var(--code); padding: 1px 6px; border-radius: 4px; }
+  ol { padding-left: 22px; }
+  footer { margin-top: 72px; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Colab Notebook</h1>
+  <p class="lead">A fast native Mac app for Jupyter notebooks that run on Google Colab GPUs and TPUs. Claude Code can drive it while you watch every cell run.</p>
+  <a class="cta" href="https://github.com/priyanshujain/colab-app/releases/latest">Download for Mac</a>
+  <a class="link" href="https://github.com/priyanshujain/colab-app">Source on GitHub</a>
+
+  <img src="screenshot.png" alt="Colab Notebook running a text classification notebook on a Colab CPU runtime">
+  <p class="caption">Claude wrote and ran these three cells on a Colab runtime through the app. The output and chart showed up live.</p>
+
+  <h2>Why it exists</h2>
+  <p>Colab gives you free and cheap GPUs, but you work in a browser tab and your notebooks live in Drive. Colab Notebook keeps the runtime and drops the rest. Your <code>.ipynb</code> files stay on your disk, next to your code and git. The app opens instantly, and you get a real editor with completions, go to definition, rename and formatting (ty and ruff). Pick Colab CPU, a T4 or A100 GPU, a TPU, or your local <code>.venv</code> from the kernel menu. Outputs, plots, tqdm bars and widgets render like they do in Colab.</p>
+
+  <h2>Working with Claude Code</h2>
+  <p>The app runs a small MCP server on your machine. Claude Code uses it to open a notebook, connect a Colab runtime, then write and run one small cell at a time. You see each cell appear in the app and its output stream in live. If a cell fails, Claude fixes that cell and runs it again instead of piling up copies, so you end up with a clean notebook rather than a script dump. You can take over at any point, edit a cell yourself, and ask Claude to carry on from there.</p>
+  <p>A typical ask looks like this:</p>
+  <pre>open ~/research/probe.ipynb on a colab T4, load gpt2 with transformer-lens,
+cache activations for 200 sentences and plot attention entropy per layer</pre>
+  <p>Claude connects the GPU, loads the model, runs the forward passes and plots the result in front of you. When it's done, it asks before releasing the runtime, so you don't burn compute units by accident.</p>
+
+  <h2>A workflow for research engineers</h2>
+  <ol>
+    <li>Keep a folder of notebooks in your project repo. Open one in the app, or clone any Colab link with File &gt; Clone from Colab.</li>
+    <li>Ask Claude for the next experiment in plain language. It works in small, runnable steps: load data, check shapes, train, plot.</li>
+    <li>Read the outputs as they land. Redirect Claude, or edit cells yourself. Both of you are editing the same live notebook.</li>
+    <li>Switch between local and a Colab GPU from the kernel menu when a step needs more power. Open separate windows to run experiments side by side.</li>
+    <li>Commit the notebook with your code. It's a normal <code>.ipynb</code> file with its outputs.</li>
+  </ol>
+
+  <h2>Setup</h2>
+  <ol>
+    <li>Download the latest release, open the DMG and drag the app to Applications. It's signed and notarized.</li>
+    <li>Open the app, then go to Settings and sign in with Google to use Colab runtimes.</li>
+    <li>Register the app with Claude Code:
+      <pre>claude mcp add --transport http --scope user colab http://127.0.0.1:7761/mcp</pre></li>
+    <li>Copy the <a class="link" href="https://github.com/priyanshujain/colab-app/tree/main/skills/colab-notebook">colab-notebook skill</a> to <code>~/.claude/skills/</code> so Claude knows how to work in notebooks the Colab way.</li>
+  </ol>
+
+  <footer>Apple Silicon Macs. Open source, Apache 2.0. <a href="https://github.com/priyanshujain/colab-app">github.com/priyanshujain/colab-app</a></footer>
+</main>
+</body>
+</html>
