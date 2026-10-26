@@ -12,7 +12,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tempfile = "3"
 dirs = "6"
 rmcp = { version = "3.7.0", features = ["client", "transport-streamable-http-client-reqwest"] }
-reqwest = "0.13.5"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -40,3 +39,4 @@ tauri-plugin-clipboard-manager = "2.5.0"
 rmcp = { version = "3.7.0", features = ["server", "macros", "transport-streamable-http-server"] }
 axum = "0.8.9"
 schemars = "1.2.3"
+reqwest = "0.13.5"

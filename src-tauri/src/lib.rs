@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod engine;
 pub mod ipc;
 pub mod mcp;

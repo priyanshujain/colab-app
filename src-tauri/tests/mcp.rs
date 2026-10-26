@@ -95,3 +95,42 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     assert_eq!(out, "");
     assert_eq!(call("release_kernel", json!({"path": p})).await, ("released".into(), false));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_reaches_the_app_through_the_stdio_bridge_across_app_restarts() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let url = format!("http://127.0.0.1:{port}/mcp");
+    let connect = async || {
+        let (client_side, bridge_side) = tokio::io::duplex(1 << 16);
+        let (bridge_in, bridge_out) = tokio::io::split(bridge_side);
+        let url = url.clone();
+        tokio::spawn(async move { colab_app_lib::bridge::bridge(&url, bridge_in, bridge_out).await });
+        ClientConfig::default().serve(tokio::io::split(client_side)).await
+    };
+    let start = async || {
+        let core = Core::new(Arc::new(|_, _| {}), dirs::data_dir().unwrap().join("dev.colab-app"));
+        let server = tokio::spawn(colab_app_lib::mcp::serve(core, port));
+        while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        server
+    };
+
+    let closed = connect().await.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(closed.contains(colab_app_lib::bridge::NOT_RUNNING), "{closed}");
+
+    let app = start().await;
+    let client = connect().await.unwrap();
+    let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
+    assert!(["open_notebook", "run_cell", "release_kernel"].iter().all(|t| tools.iter().any(|n| n == t)), "{tools:?}");
+    let list = CallToolRequestParams::new("list_notebooks");
+    assert_eq!(client.call_tool(list.clone()).await.unwrap().is_error, Some(false));
+
+    app.abort();
+    let _ = app.await;
+    let down = client.call_tool(list.clone()).await.unwrap_err().to_string();
+    assert!(down.contains(colab_app_lib::bridge::NOT_RUNNING), "{down}");
+
+    let _app = start().await;
+    assert_eq!(client.call_tool(list).await.unwrap().is_error, Some(false), "bridge did not reconnect after the app restarted");
+}
