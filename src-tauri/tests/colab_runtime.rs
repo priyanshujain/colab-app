@@ -9,7 +9,7 @@ type Events = Arc<Mutex<Vec<(String, Value)>>>;
 fn core(events: &Events) -> Arc<Core> {
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"))
+    Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests")
 }
 
 async fn idle(events: &Events) {

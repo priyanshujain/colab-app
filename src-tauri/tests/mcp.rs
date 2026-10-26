@@ -18,7 +18,7 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
 
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     tokio::spawn(colab_app_lib::mcp::serve(core.clone(), port));
@@ -112,7 +112,7 @@ async fn claude_code_reaches_the_app_through_the_stdio_bridge_across_app_restart
         ClientConfig::default().serve(tokio::io::split(client_side)).await
     };
     let start = async || {
-        let core = Core::new(Arc::new(|_, _| {}), dirs::data_dir().unwrap().join("dev.colab-app"));
+        let core = Core::with_secrets(Arc::new(|_, _| {}), dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
         let server = tokio::spawn(colab_app_lib::mcp::serve(core, port));
         while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -146,7 +146,7 @@ async fn run_cell_longer_than_five_quiet_minutes_still_returns_its_output() {
     let path = dir.path().join("long.ipynb");
     let cell = json!({"cell_type": "code", "id": "train", "metadata": {}, "execution_count": null, "outputs": [], "source": "import time\ntime.sleep(330)\nprint('trained')"});
     std::fs::write(&path, json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {"kernelspec": {"name": "python3"}}, "cells": [cell]}).to_string()).unwrap();
-    let core = Core::new(Arc::new(|_: &str, _: Value| {}), dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(Arc::new(|_: &str, _: Value| {}), dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     tokio::spawn(colab_app_lib::mcp::serve(core, port));
     while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {

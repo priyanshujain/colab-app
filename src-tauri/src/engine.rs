@@ -93,7 +93,7 @@ fn ipc_variant(v: &Value) -> ipc::Variant {
 
 impl Core {
     pub fn new(emit: Emit, data_dir: PathBuf) -> Arc<Self> {
-        Self::with_secrets(emit, data_dir, "Colab Notebook secrets")
+        Self::with_secrets(emit, data_dir, "colab-app")
     }
 
     pub fn with_secrets(emit: Emit, data_dir: PathBuf, service: &str) -> Arc<Self> {

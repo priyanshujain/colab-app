@@ -50,7 +50,7 @@ async fn local_notebook_runs_saves_merges_and_uses_tooling() {
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
     let data = dirs::data_dir().unwrap().join("dev.colab-app");
-    let core = Core::new(emit, data);
+    let core = Core::with_secrets(emit, data, "colab-app-tests");
     let opened = core.open_notebook(path.to_str().unwrap()).await.unwrap();
     let p = opened.path.clone();
 
@@ -122,7 +122,7 @@ async fn local_comm_messages_carry_target_name_and_binary_buffers() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     core.run_cell(&p, "t").await.unwrap();
 
@@ -152,7 +152,7 @@ async fn local_huge_outputs_and_300_cells_stay_responsive() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let started = Instant::now();
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     assert!(started.elapsed() < Duration::from_millis(500), "opening 300 cells took {:?}", started.elapsed());
@@ -199,7 +199,7 @@ async fn rename_keeps_kernel_and_autosave_reports_save_state() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     core.run_cell(&p, "a").await.unwrap();
 
@@ -231,7 +231,7 @@ async fn format_organizes_imports_and_quick_fix_rewrites_alias_import() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     let codes = |v: &Value| v["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
     let latest = |events: &Events| events.lock().unwrap().iter().rev().find(|(n, v)| n == "diagnostics" && v["cell_id"] == "imports").map(|(_, v)| codes(v)).unwrap_or_default();
@@ -276,7 +276,7 @@ async fn local_run_saves_jupyterlab_timing_metadata_for_ok_and_failed_cells() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     core.run_cell(&p, "slow").await.unwrap();
     core.run_cell(&p, "bad").await.unwrap();
@@ -305,7 +305,7 @@ async fn rename_symbol_updates_every_cell_and_rejects_blank_positions() {
     let events = Events::default();
     let sink = events.clone();
     let emit: Emit = Arc::new(move |name, payload| sink.lock().unwrap().push((name.into(), payload)));
-    let core = Core::new(emit, dirs::data_dir().unwrap().join("dev.colab-app"));
+    let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let p = core.open_notebook(path.to_str().unwrap()).await.unwrap().path;
     wait_for(&events, "diagnostics", |n, _| n == "diagnostics").await;
     let pos = CellPosition { path: p.clone(), cell_id: "train".into(), line: 1, character: 18 };
