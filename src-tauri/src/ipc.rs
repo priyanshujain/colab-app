@@ -30,7 +30,7 @@ pub enum KernelChoice {
     Colab { variant: Variant, accelerator: Option<String>, high_ram: bool },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "UPPERCASE")]
 #[ts(export)]
 pub enum Variant {

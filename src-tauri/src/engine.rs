@@ -538,7 +538,26 @@ impl Core {
             self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Disconnected, choice: Some(choice) });
             return Ok(());
         }
+        if self.reuse_detached(&open, &choice).await? {
+            return Ok(());
+        }
         self.start_kernel(&open, choice).await
+    }
+
+    async fn reuse_detached(self: &Arc<Self>, open: &Arc<Open>, choice: &KernelChoice) -> Result<bool> {
+        let KernelChoice::Colab { variant, accelerator, .. } = choice else { return Ok(false) };
+        let colab = self.colab().await?;
+        let Some(kernel) = colab.reattach(&open.path).await? else { return Ok(false) };
+        let assigned = colab.assignments().await?.into_iter().find(|a| a.endpoint == kernel.runtime.endpoint);
+        let same = assigned.is_some_and(|a| ipc_variant(&a.variant) == *variant && accelerator.as_ref().is_none_or(|acc| *acc == a.accelerator));
+        if !same {
+            log::info!("releasing detached runtime {} of {} for a different one", kernel.runtime.endpoint, open.key);
+            kernel.release().await?;
+            return Ok(false);
+        }
+        log::info!("reusing detached runtime {} for {}", kernel.runtime.endpoint, open.key);
+        self.install(open, Active::Colab(kernel), choice.clone()).await;
+        Ok(true)
     }
 
     async fn ensure_kernel(self: &Arc<Self>, open: &Arc<Open>) -> Result<()> {

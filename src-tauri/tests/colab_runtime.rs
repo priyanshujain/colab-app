@@ -114,3 +114,41 @@ async fn colab_long_loop_survives_drops_and_external_edits_with_widget_buffers()
     let bar = outputs.iter().rev().find(|o| o["name"] == "stderr").unwrap()["text"].to_string();
     assert!(bar.contains("150/150") && !bar.contains("149/150"), "{bar}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "assigns a real free CPU Colab runtime"]
+async fn connecting_after_detach_reuses_the_detached_runtime_instead_of_assigning_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("detached.ipynb");
+    let cell = |id: &str, src: &str| json!({"cell_type": "code", "id": id, "metadata": {}, "execution_count": null, "outputs": [], "source": src});
+    std::fs::write(&path, json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": [cell("set", "secret = 4321"), cell("get", "secret")]}).to_string()).unwrap();
+    let cpu = KernelChoice::Colab { variant: Variant::Default, accelerator: None, high_ram: false };
+
+    let events = Events::default();
+    let app = core(&events);
+    let p = app.open_notebook(path.to_str().unwrap()).await.unwrap().path;
+    let before = app.list_runtimes().await.unwrap();
+    app.agent_connect(&p, cpu.clone()).await.unwrap();
+    idle(&events).await;
+    let ours = app.list_runtimes().await.unwrap().into_iter().filter(|r| !before.iter().any(|b| b.endpoint == r.endpoint)).collect::<Vec<_>>();
+    assert_eq!(ours.len(), 1);
+    app.run_cell(&p, "set").await.unwrap();
+    app.detach(&p).await.unwrap();
+
+    events.lock().unwrap().clear();
+    let started = Instant::now();
+    assert!(app.agent_connect(&p, cpu).await.unwrap());
+    idle(&events).await;
+    let connected_in = started.elapsed();
+    let after = app.list_runtimes().await.unwrap();
+    assert_eq!(after.len(), before.len() + 1, "a second runtime was assigned");
+    assert!(after.iter().any(|r| r.endpoint == ours[0].endpoint));
+    app.run_cell(&p, "get").await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let outputs = serde_json::to_value(&app.notebook(&p).unwrap().cells[1].outputs).unwrap();
+    app.release(&p).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(app.list_runtimes().await.unwrap().len(), before.len());
+    assert_eq!(outputs[0]["data"]["text/plain"], "4321", "variables were lost, so this is not the detached runtime");
+    eprintln!("reconnected in {connected_in:?}");
+}
