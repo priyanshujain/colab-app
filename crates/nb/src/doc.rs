@@ -49,7 +49,7 @@ pub struct NotebookDoc {
     state: Arc<Mutex<State>>,
     on_dirty: OnDirty,
     tx: Sender<Msg>,
-    _watcher: notify::RecommendedWatcher,
+    _watcher: Arc<Mutex<Option<notify::RecommendedWatcher>>>,
 }
 
 impl NotebookDoc {
@@ -59,13 +59,22 @@ impl NotebookDoc {
         let notebook = Notebook::parse(&on_disk)?;
         let state = Arc::new(Mutex::new(State { notebook, active: None, running: HashSet::new(), on_disk }));
         let (tx, rx) = channel();
-        let (watch_tx, watch_path) = (tx.clone(), path.clone());
-        let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            if event.is_ok_and(|e| e.paths.iter().any(|p| p == &watch_path)) {
-                let _ = watch_tx.send(Msg::Fs);
+        let watcher = Arc::new(Mutex::new(None));
+        let (slot, watch_tx, watch_path) = (Arc::downgrade(&watcher), tx.clone(), path.clone());
+        std::thread::spawn(move || {
+            let (event_tx, event_path) = (watch_tx.clone(), watch_path.clone());
+            let started = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                if event.is_ok_and(|e| e.paths.iter().any(|p| p == &event_path)) {
+                    let _ = event_tx.send(Msg::Fs);
+                }
+            }).and_then(|mut w| w.watch(watch_path.parent().unwrap(), RecursiveMode::NonRecursive).map(|_| w));
+            match (started, slot.upgrade()) {
+                (Ok(w), Some(slot)) => *slot.lock().unwrap() = Some(w),
+                (Err(e), _) => return log::error!("watching {}: {e}", watch_path.display()),
+                _ => return,
             }
-        })?;
-        watcher.watch(path.parent().unwrap(), RecursiveMode::NonRecursive)?;
+            let _ = watch_tx.send(Msg::Fs);
+        });
         let (worker_path, worker_state, on_dirty) = (path.clone(), state.clone(), OnDirty::default());
         let worker_dirty = on_dirty.clone();
         std::thread::spawn(move || run(worker_path, worker_state, rx, on_external_change, worker_dirty));
