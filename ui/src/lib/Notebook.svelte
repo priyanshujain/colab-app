@@ -181,6 +181,10 @@
   }
 
   onMount(() => {
+    const listening = api.onDiagnostics((e) => {
+      if (e.path === path) diagnostics[e.cell_id] = e.diagnostics
+    })
+    listening.then(() => api.diagnostics(path)).then((list) => list.forEach((e) => (diagnostics[e.cell_id] ??= e.diagnostics)), () => {})
     const subs = [
       api.onCellOutputs((e) => {
         if (e.path !== path) return
@@ -195,9 +199,7 @@
         formatting.clear()
         cells = e.notebook.cells.map((c) => (c.id === mine?.id ? { ...c, source: mine.source } : c))
       }),
-      api.onDiagnostics((e) => {
-        if (e.path === path) diagnostics[e.cell_id] = e.diagnostics
-      }),
+      listening,
       api.onInputRequest((e) => {
         if (e.path === path) input = e
       }),

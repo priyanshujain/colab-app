@@ -232,6 +232,7 @@ export function mockApi(): Api {
     onAgentFocus: async () => () => {},
     windowStartup: async () => null,
     kernelState: async (path) => ({ path, status: 'disconnected', choice: null }),
+    diagnostics: async () => [],
     onMenu: async () => () => {},
   }
 }

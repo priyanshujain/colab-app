@@ -264,8 +264,8 @@ impl Core {
 
     async fn start_project(self: Arc<Self>, open: Arc<Open>) -> Result<()> {
         let project = self.project(&open).await?;
-        open.sync_tooling().await;
         let mut rx = project.subscribe();
+        open.sync_tooling().await;
         let prefix = cell_uri(&open.path, "");
         let weak = Arc::downgrade(&open);
         drop(open);
@@ -352,6 +352,13 @@ impl Core {
         let guard = open.kernel.read().await;
         let choice = guard.as_ref().map(|s| s.choice.clone()).or_else(|| open.choice.lock().unwrap().clone());
         Ok(KernelStatusEvent { path: open.key.clone(), status: guard.as_ref().map_or(KernelStatus::Disconnected, |s| s.active.k().status()), choice })
+    }
+
+    pub fn diagnostics(&self, path: &str) -> Result<Vec<Diagnostics>> {
+        let open = self.get(path)?;
+        let Some(project) = open.project.get() else { return Ok(vec![]) };
+        let cells = open.doc.notebook().cells.into_iter().filter(|c| c.cell_type == CellType::Code);
+        Ok(cells.map(|c| Diagnostics { path: open.key.clone(), diagnostics: project.diagnostics(&cell_uri(&open.path, &c.id)), cell_id: c.id }).collect())
     }
 
     pub async fn agent_connect(self: &Arc<Self>, path: &str, choice: KernelChoice) -> Result<bool> {

@@ -71,6 +71,7 @@ export interface Api {
   onSaveState(cb: (e: SaveState) => void): Promise<Unlisten>
   onAgentFocus(cb: (e: AgentFocus) => void): Promise<Unlisten>
   kernelState(path: string): Promise<KernelStatusEvent>
+  diagnostics(path: string): Promise<Diagnostics[]>
   onMenu(cb: (id: string) => void): Promise<Unlisten>
 }
 
@@ -133,6 +134,7 @@ async function tauriApi(): Promise<Api> {
     onSaveState: on('save-state'),
     onAgentFocus: on('agent-focus'),
     kernelState: (path) => invoke('kernel_state', { path }),
+    diagnostics: (path) => invoke('diagnostics', { path }),
     onMenu: on('menu'),
   }
 }

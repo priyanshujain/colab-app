@@ -243,6 +243,9 @@ async fn format_organizes_imports_and_quick_fix_rewrites_alias_import() {
         }
     };
     settle(&events, &|c| c.contains(&"I001".into()) && c.contains(&"PLR0402".into())).await;
+    let current = core.diagnostics(&p).unwrap();
+    assert_eq!(current.iter().map(|d| d.cell_id.as_str()).collect::<Vec<_>>(), ["imports", "policy"]);
+    assert_eq!(codes(&serde_json::to_value(&current[0]).unwrap()), latest(&events));
 
     core.format(&p, None).await.unwrap();
     let sorted = "import gymnasium as gym\nimport matplotlib.pyplot as plt\nimport numpy as np\nimport torch\nimport torch.nn as nn\n\ntorch.manual_seed(0)";
