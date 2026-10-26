@@ -178,7 +178,7 @@
         {:else}
           <p class="muted">No secrets yet.</p>
         {/each}
-        <div class="row"><button class="outline" onclick={() => secrets.push({ name: '', saved: '', value: '', shown: true })}>Add new secret</button></div>
+        <div class="row"><button class="outline" onclick={() => secrets.push({ name: '', saved: '', value: '', shown: false })}>Add new secret</button></div>
         {#if secretError}<p class="error">{secretError}</p>{/if}
       </div>
     {:else}
