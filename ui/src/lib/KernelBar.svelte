@@ -8,12 +8,11 @@
   import type { Api } from './ipc'
   import { account, settings } from './state.svelte'
 
-  let { api, path, wide, status = $bindable('disconnected') }: { api: Api; path: string; wide: boolean; status?: KernelStatus } = $props()
+  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: 'local' | 'colab' } = $props()
 
   let active = $state<KernelChoice | null>(null)
   let info = $state<ColabInfo | null>(null)
   let error = $state('')
-  let kind = $state<'local' | 'colab'>('local')
   let runtime = $state('DEFAULT')
   let highRam = $state(false)
   let busy = $state(false)

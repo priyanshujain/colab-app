@@ -7,7 +7,7 @@
   import type { Api } from './ipc'
   import { applyEdit } from './edit'
   import { offsets, visibleRange } from './virtual'
-  import { target, type Lsp } from './lsp'
+  import { shown, target, type Lsp } from './lsp'
   import { label, pressed } from './settings'
   import { alerts, settings } from './state.svelte'
   import type { KernelStatus } from '../bindings/KernelStatus'
@@ -46,6 +46,7 @@
   const marks = $derived(Map.groupBy(found, (m) => m.cell))
   let dirty = $state(false)
   let status = $state<KernelStatus>('disconnected')
+  let kind = $state<'local' | 'colab'>('local')
   const wide = $derived(width >= 960)
   const live = $derived(status !== 'disconnected' && status !== 'dead')
 
@@ -257,7 +258,7 @@
     </div>
   {/if}
   <span class="grow"></span>
-  <KernelBar {api} {path} {wide} bind:status />
+  <KernelBar {api} {path} {wide} bind:status bind:kind />
   {#if finding}
     <Find bind:this={finder} sources={cells.map((c) => c.source)} start={selected} onfound={(m) => (found = m)} onreveal={(m) => (show(m.cell, false), (match = { ...m }))} onreplace={(i, source) => edit({ kind: 'source', cell_id: cells[i].id, source })} onclose={closeFind} />
   {/if}
@@ -286,7 +287,7 @@
           editing={editing && i === selected}
           running={running.has(cell.id)}
           lsp={lspFor(cell.id)}
-          diagnostics={diagnostics[cell.id] ?? []}
+          diagnostics={shown(diagnostics[cell.id] ?? [], settings, kind === 'colab')}
           marks={marks.get(i) ?? none}
           match={match?.cell === i ? match : null}
           reveal={reveal?.id === cell.id ? reveal : null}

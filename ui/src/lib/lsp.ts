@@ -61,6 +61,9 @@ const offset = (doc: Text, p: Range['start']) => {
   return Math.min(line.from + p.character, line.to)
 }
 
+export const shown = (list: unknown[], s: Pick<Settings, 'lintDiagnostics' | 'typeDiagnostics'>, colab: boolean) =>
+  (list as Any[]).filter((d) => (d.source === 'Ruff' ? s.lintDiagnostics : d.source === 'ty' ? s.typeDiagnostics && !(colab && d.code === 'unresolved-import') : true))
+
 export function diagnostics(list: unknown[], doc: Text): Diagnostic[] {
   return (list as Any[]).map((d) => {
     const from = offset(doc, d.range.start)

@@ -128,6 +128,11 @@
         <label class="row"><span>Word wrap</span><input type="checkbox" bind:checked={settings.wordWrap} /></label>
       </div>
       <div class="card">
+        <h3>Diagnostics</h3>
+        <label class="row"><span>Lint warnings<small>Ruff, using your project's ruff config</small></span><input type="checkbox" bind:checked={settings.lintDiagnostics} /></label>
+        <label class="row"><span>Type errors<small>ty. Missing imports are not shown on Colab kernels, since packages live on the runtime</small></span><input type="checkbox" bind:checked={settings.typeDiagnostics} /></label>
+      </div>
+      <div class="card">
         <h3>Markdown</h3>
         <label class="row"><span>Double click to edit markdown<small>Otherwise use the pencil button or Enter</small></span><input type="checkbox" bind:checked={settings.dblclickMarkdown} /></label>
       </div>

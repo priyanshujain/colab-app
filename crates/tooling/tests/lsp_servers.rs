@@ -55,7 +55,9 @@ async fn notebook_language_features_on_real_servers() {
     assert!(lib[0]["uri"].as_str().unwrap().contains("/.venv/lib/"), "{lib}");
 
     wait_for(&project, &a, |d| has(d, "F401")).await;
-    wait_for(&project, &c, |d| has(d, "F821") && has(d, "unresolved-reference")).await;
+    let d = wait_for(&project, &c, |d| has(d, "F821") && has(d, "unresolved-reference")).await;
+    let source = |code: &str| d.iter().find(|d| d["code"] == code).unwrap()["source"].clone();
+    assert_eq!((source("F821"), source("unresolved-reference")), ("Ruff".into(), "ty".into()));
 
     let edits = project.format(&c).await.unwrap();
     assert!(edits.to_string().contains("z = six.PY3"), "{edits}");

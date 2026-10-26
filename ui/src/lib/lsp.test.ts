@@ -1,7 +1,7 @@
 import { Text } from '@codemirror/state'
 import { expect, test } from 'vitest'
 import { highlightPython } from './highlight'
-import { completions, diagnostics, hoverText, renameRange, target } from './lsp'
+import { completions, diagnostics, hoverText, renameRange, shown, target } from './lsp'
 import { renderMarkdown } from './markdown'
 
 test('definition targets map ty locations to a cell of this notebook or a library file', () => {
@@ -72,4 +72,18 @@ test('rename range comes from prepareRename in each LSP shape', () => {
   expect(renameRange({ range: { start: { line: 1, character: 17 }, end: { line: 1, character: 19 } }, placeholder: 'lr' }, doc, pos)?.name).toBe('lr')
   expect(renameRange({ defaultBehavior: true }, doc, pos)).toEqual({ from: pos - 1, to: pos + 1, name: 'lr' })
   expect(renameRange(null, doc, pos)).toBeNull()
+})
+
+test('diagnostics follow the lint and type settings and drop missing imports on colab kernels', () => {
+  const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 9 } }
+  const list = [
+    { range, severity: 2, source: 'Ruff', code: 'I001', message: 'Import block is un-sorted or un-formatted' },
+    { range, severity: 1, source: 'ty', code: 'unresolved-import', message: 'Cannot resolve imported module `google.colab`' },
+    { range, severity: 1, source: 'ty', code: 'unresolved-reference', message: 'Name `missing` used when not defined' },
+  ]
+  const codes = (lint: boolean, types: boolean, colab: boolean) => shown(list, { lintDiagnostics: lint, typeDiagnostics: types }, colab).map((d) => (d as { code: string }).code)
+  expect(codes(true, true, false)).toEqual(['I001', 'unresolved-import', 'unresolved-reference'])
+  expect(codes(true, true, true)).toEqual(['I001', 'unresolved-reference'])
+  expect(codes(false, true, false)).toEqual(['unresolved-import', 'unresolved-reference'])
+  expect(codes(true, false, false)).toEqual(['I001'])
 })

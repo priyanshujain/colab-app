@@ -14,6 +14,8 @@ export const defaults = {
   wordWrap: true,
   theme: 'default',
   dblclickMarkdown: false,
+  lintDiagnostics: true,
+  typeDiagnostics: true,
   keys: {
     rename: 'Mod+R',
     formatCell: 'Alt+Shift+F',
