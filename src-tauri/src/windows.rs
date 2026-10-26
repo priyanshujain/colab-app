@@ -35,11 +35,30 @@ impl Registry {
         self.ready.contains(label) || (self.startup.insert(label.into(), action.into()), false).1
     }
 
+    pub fn place(&mut self, path: &str, windows: &[String], action: &str) -> Place {
+        if let Some(owner) = self.owner(path) {
+            return Place::Focus(owner.into());
+        }
+        let label = windows.iter().find(|l| self.is_blank(l)).cloned().unwrap_or_else(|| {
+            let label = next_label();
+            self.startup.insert(label.clone(), action.into());
+            label
+        });
+        self.notebooks.insert(label.clone(), path.into());
+        Place::Load(label)
+    }
+
     pub fn close(&mut self, label: &str) {
         self.notebooks.remove(label);
         self.startup.remove(label);
         self.ready.remove(label);
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Place {
+    Focus(String),
+    Load(String),
 }
 
 pub type Windows = Mutex<Registry>;
@@ -48,14 +67,22 @@ fn registry<R: Runtime>(app: &AppHandle<R>) -> std::sync::MutexGuard<'_, Registr
     app.state::<Windows>().inner().lock().unwrap()
 }
 
-pub fn create<R: Runtime>(app: &AppHandle<R>, startup: &str) -> tauri::Result<()> {
+fn next_label() -> String {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
-    let label = format!("window-{}", NEXT.fetch_add(1, Ordering::Relaxed));
-    registry(app).startup.insert(label.clone(), startup.into());
-    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::default()).title("").inner_size(1200.0, 850.0).min_inner_size(700.0, 500.0);
+    format!("window-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
+fn build<R: Runtime>(app: &AppHandle<R>, label: &str) -> tauri::Result<()> {
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default()).title("").inner_size(1200.0, 850.0).min_inner_size(700.0, 500.0);
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(tauri::LogicalPosition::new(9.0, 25.0));
     builder.build().map(drop)
+}
+
+pub fn create<R: Runtime>(app: &AppHandle<R>, startup: &str) -> tauri::Result<()> {
+    let label = next_label();
+    registry(app).startup.insert(label.clone(), startup.into());
+    build(app, &label)
 }
 
 pub fn startup<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String> {
@@ -100,13 +127,17 @@ pub fn menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
 }
 
 pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
-    if focus_owner(app, path) {
-        return;
-    }
-    let blank = app.webview_windows().into_values().filter(|w| registry(app).is_blank(w.label())).max_by_key(|w| w.is_focused().unwrap_or(false));
-    let result = match blank {
-        Some(window) => send(app, &window, &format!("open-recent:{path}")),
-        None => create(app, &format!("open-recent:{path}")),
+    let mut windows: Vec<_> = app.webview_windows().into_values().collect();
+    windows.sort_by_key(|w| !w.is_focused().unwrap_or(false));
+    let labels: Vec<_> = windows.iter().map(|w| w.label().to_string()).collect();
+    let action = format!("open-recent:{path}");
+    let place = registry(app).place(path, &labels, &action);
+    let result = match place {
+        Place::Focus(owner) => Ok(focus(app, &owner)),
+        Place::Load(label) => match app.get_webview_window(&label) {
+            Some(window) => send(app, &window, &action),
+            None => build(app, &label),
+        },
     };
     let _ = result.map_err(|e| log::error!("agent open {path}: {e}"));
 }
@@ -147,5 +178,24 @@ mod tests {
         assert_eq!(r.take_startup("window-1"), None);
         r.close("main");
         assert!(!r.deliver("main", "settings"));
+    }
+
+    #[test]
+    fn notebooks_the_agent_opens_back_to_back_each_get_their_own_window() {
+        let mut r = Registry::default();
+        r.take_startup("main");
+        let windows = vec!["main".to_string()];
+        assert_eq!(r.place("/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Load("main".into()));
+        let Place::Load(second) = r.place("/nb/eval.ipynb", &windows, "open-recent:/nb/eval.ipynb") else { panic!("eval was not given a window") };
+        assert_ne!(second, "main");
+        assert_eq!(r.take_startup(&second).as_deref(), Some("open-recent:/nb/eval.ipynb"));
+        assert_eq!(r.place("/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Focus("main".into()));
+        assert_eq!(r.claim("main", "/nb/train.ipynb"), None);
+        assert_eq!(r.claim(&second, "/nb/eval.ipynb"), None);
+        let windows = vec!["main".to_string(), second.clone()];
+        let Place::Load(third) = r.place("/nb/data.ipynb", &windows, "open-recent:/nb/data.ipynb") else { panic!("data was not given a window") };
+        assert!(!windows.contains(&third));
+        r.close("main");
+        assert_eq!(r.place("/nb/train.ipynb", &[second.clone(), "window-blank".into()], "open-recent:/nb/train.ipynb"), Place::Load("window-blank".into()));
     }
 }
