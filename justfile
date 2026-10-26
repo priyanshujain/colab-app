@@ -26,7 +26,7 @@ install: build
     src="{{bundle}}/{{app}}.app"
     if [ -w /Applications ]; then dir=/Applications; else dir="$HOME/Applications"; mkdir -p "$dir"; fi
     dest="$dir/{{app}}.app"
-    running() { pgrep -f "{{app}}.app/Contents/MacOS/colab-app" > /dev/null; }
+    running() { pgrep -f "{{app}}.app/Contents/MacOS/colab-app$" > /dev/null; }
     if running; then
       osascript -e 'quit app "{{app}}"' 2> /dev/null || true
       for _ in $(seq 40); do running || break; sleep 0.25; done
