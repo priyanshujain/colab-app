@@ -21,7 +21,9 @@
 
   async function load(path: string) {
     try {
-      opened = await api!.openNotebook(path)
+      const result = await api!.openNotebook(path)
+      if (!result) return
+      opened = result
       recent = [path, ...recent.filter((p) => p !== path)].slice(0, 8)
       localStorage.setItem('recent', JSON.stringify(recent))
       settingsOpen = false
@@ -74,9 +76,10 @@
     ready.then(async (a) => {
       api = a
       a.onMenu(menu)
-      a.onAgentOpen((e) => load(e.path))
       a.onAuthState((s) => { account.auth = s })
       account.auth = await a.authState().catch(() => account.auth)
+      const startup = await a.windowStartup()
+      if (startup !== null) return startup && menu(startup)
       const initial = new URLSearchParams(location.search).get('path') ?? recent[0] ?? (inTauri ? null : 'sample.ipynb')
       if (initial) load(initial)
     })

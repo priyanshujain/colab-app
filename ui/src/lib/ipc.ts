@@ -1,5 +1,4 @@
 import type { AgentFocus } from '../bindings/AgentFocus'
-import type { AgentOpen } from '../bindings/AgentOpen'
 import type { AuthState } from '../bindings/AuthState'
 import type { CellEdit } from '../bindings/CellEdit'
 import type { CellOutputs } from '../bindings/CellOutputs'
@@ -21,7 +20,8 @@ export type { SaveState } from "../bindings/SaveState"
 import type { SaveState } from "../bindings/SaveState"
 
 export interface Api {
-  openNotebook(path: string): Promise<OpenedNotebook>
+  openNotebook(path: string): Promise<OpenedNotebook | null>
+  windowStartup(): Promise<string | null>
   editCell(path: string, edit: CellEdit): Promise<void>
   runCell(path: string, cellId: string): Promise<void>
   runAll(path: string): Promise<void>
@@ -67,7 +67,6 @@ export interface Api {
   onInputRequest(cb: (e: InputRequest) => void): Promise<Unlisten>
   onSaveState(cb: (e: SaveState) => void): Promise<Unlisten>
   onAgentFocus(cb: (e: AgentFocus) => void): Promise<Unlisten>
-  onAgentOpen(cb: (e: AgentOpen) => void): Promise<Unlisten>
   kernelState(path: string): Promise<KernelStatusEvent>
   onMenu(cb: (id: string) => void): Promise<Unlisten>
 }
@@ -81,6 +80,7 @@ async function tauriApi(): Promise<Api> {
   const on = <T>(name: string) => (cb: (e: T) => void) => listen<T>(name, (e) => cb(e.payload))
   return {
     openNotebook: (path) => invoke('open_notebook', { path }),
+    windowStartup: () => invoke('window_startup'),
     editCell: (path, edit) => invoke('edit_cell', { path, edit }),
     runCell: (path, cellId) => invoke('run_cell', { path, cellId }),
     runAll: (path) => invoke('run_all', { path }),
@@ -126,7 +126,6 @@ async function tauriApi(): Promise<Api> {
     onInputRequest: on('input-request'),
     onSaveState: on('save-state'),
     onAgentFocus: on('agent-focus'),
-    onAgentOpen: on('agent-open'),
     kernelState: (path) => invoke('kernel_state', { path }),
     onMenu: on('menu'),
   }

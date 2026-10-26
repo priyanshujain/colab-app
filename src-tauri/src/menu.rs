@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use tauri::menu::{Menu, MenuEvent, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const RECENT_LIMIT: usize = 10;
@@ -42,7 +42,7 @@ fn build<R: Runtime>(app: &AppHandle<R>, recent: &[String]) -> tauri::Result<Men
     let name = app.package_info().name.clone();
     let app_menu = SubmenuBuilder::new(app, &name).about(None).separator().item(&item("settings", "Settings...", Some("CmdOrCtrl+,"))?)
         .separator().services().separator().hide().hide_others().show_all().separator().quit().build()?;
-    let file = SubmenuBuilder::new(app, "File").item(&item("open", "Open...", Some("CmdOrCtrl+O"))?).item(&open_recent)
+    let file = SubmenuBuilder::new(app, "File").item(&item("new-window", "New Window", Some("CmdOrCtrl+Shift+N"))?).separator().item(&item("open", "Open...", Some("CmdOrCtrl+O"))?).item(&open_recent)
         .item(&item("clone", "Clone from Colab...", None)?).separator().close_window().build()?;
     let edit = SubmenuBuilder::new(app, "Edit").undo().redo().separator().cut().copy().paste().select_all().build()?;
     let view = SubmenuBuilder::new(app, "View").fullscreen().build()?;
@@ -69,8 +69,10 @@ pub fn clicked<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     } else if let Some(path) = id.strip_prefix("reveal:") {
         let _ = tauri_plugin_opener::reveal_item_in_dir(path).map_err(|e| eprintln!("reveal: {e}"));
     }
-    if ["open", "clone", "settings"].contains(&id) || id.starts_with("open-recent:") {
-        let _ = app.emit("menu", id);
+    if id == "new-window" {
+        let _ = crate::windows::create(app, "").map_err(|e| eprintln!("new window: {e}"));
+    } else if ["open", "clone", "settings"].contains(&id) || id.starts_with("open-recent:") {
+        crate::windows::menu(app, id);
     }
 }
 

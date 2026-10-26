@@ -3,6 +3,7 @@ pub mod ipc;
 pub mod mcp;
 mod menu;
 mod outputs;
+mod windows;
 
 use crate::engine::Core;
 use ipc::*;
@@ -17,12 +18,21 @@ fn err(e: anyhow::Error) -> String {
 }
 
 #[tauri::command]
-async fn open_notebook(handle: tauri::AppHandle, app: App<'_>, path: String) -> Result<OpenedNotebook> {
+async fn open_notebook(handle: tauri::AppHandle, window: tauri::WebviewWindow, app: App<'_>, path: String) -> Result<Option<OpenedNotebook>> {
     let opened = app.open_notebook(&path).await.map_err(err)?;
+    if !windows::claim(&handle, window.label(), &opened.path) {
+        return Ok(None);
+    }
+    drop(window.set_title(std::path::Path::new(&opened.path).file_name().map_or("", |n| n.to_str().unwrap_or_default())));
     if let Err(e) = menu::opened(&handle, &opened.path, None) {
         eprintln!("recent menu: {e:#}");
     }
-    Ok(opened)
+    Ok(Some(opened))
+}
+
+#[tauri::command]
+fn window_startup(handle: tauri::AppHandle, window: tauri::WebviewWindow) -> Option<String> {
+    windows::startup(&handle, window.label())
 }
 
 #[tauri::command]
@@ -234,9 +244,14 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .menu(menu::initial)
         .on_menu_event(menu::clicked)
+        .manage(windows::Windows::default())
+        .on_window_event(|window, event| if let tauri::WindowEvent::Destroyed = event { windows::closed(window.app_handle(), window.label()) })
         .setup(|app| {
             let handle = app.handle().clone();
-            let emit: crate::engine::Emit = Arc::new(move |event, payload| drop(handle.emit(event, payload)));
+            let emit: crate::engine::Emit = Arc::new(move |event, payload| match (event, payload.get("path").and_then(|p| p.as_str())) {
+                (ipc::events::AGENT_OPEN, Some(path)) => windows::agent_open(&handle, path),
+                _ => drop(handle.emit(event, payload)),
+            });
             let core = Core::new(emit, app.path().app_data_dir()?);
             app.manage(core.clone());
             let server = core.clone();
@@ -247,10 +262,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_notebook, rename_notebook, edit_cell, run_cell, run_all, interrupt, restart, select_kernel, kernel_state, send_comm,
             sign_in, sign_out, auth_state, colab_info, list_runtimes, detach, release, clone_link,
-            completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu
+            completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu, window_startup
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => { let _ = windows::create(app, "").map_err(|e| eprintln!("new window: {e}")); }
+            _ => {}
+        });
 }
 
 #[cfg(test)]
