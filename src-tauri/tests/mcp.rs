@@ -134,3 +134,29 @@ async fn claude_code_reaches_the_app_through_the_stdio_bridge_across_app_restart
     let _app = start().await;
     assert_eq!(client.call_tool(list).await.unwrap().is_error, Some(false), "bridge did not reconnect after the app restarted");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "runs a cell for five and a half minutes"]
+async fn run_cell_longer_than_five_quiet_minutes_still_returns_its_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.ipynb");
+    let cell = json!({"cell_type": "code", "id": "train", "metadata": {}, "execution_count": null, "outputs": [], "source": "import time\ntime.sleep(330)\nprint('trained')"});
+    std::fs::write(&path, json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {"kernelspec": {"name": "python3"}}, "cells": [cell]}).to_string()).unwrap();
+    let core = Core::new(Arc::new(|_: &str, _: Value| {}), dirs::data_dir().unwrap().join("dev.colab-app"));
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    tokio::spawn(colab_app_lib::mcp::serve(core, port));
+    while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let client = ClientConfig::default().serve(StreamableHttpClientTransport::from_config(StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{port}/mcp")))).await.unwrap();
+    let call = async |name: &'static str, args: Value| {
+        let r = client.call_tool(CallToolRequestParams::new(name).with_arguments(args.as_object().cloned().unwrap())).await.unwrap();
+        serde_json::to_value(r).unwrap()["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    };
+    let p = call("open_notebook", json!({"path": path})).await;
+    call("connect_kernel", json!({"path": p, "runtime": "local"})).await;
+    let started = Instant::now();
+    let out = tokio::time::timeout(Duration::from_secs(420), call("run_cell", json!({"path": p, "cell_id": "train"}))).await.expect("run_cell never returned");
+    assert_eq!(out, "trained");
+    assert!(started.elapsed() >= Duration::from_secs(330));
+}

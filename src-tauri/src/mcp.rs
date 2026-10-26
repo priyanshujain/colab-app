@@ -214,9 +214,15 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+fn sessions() -> LocalSessionManager {
+    let mut manager = LocalSessionManager::default();
+    manager.session_config.keep_alive = None;
+    manager
+}
+
 pub async fn serve(core: Arc<Core>, port: u16) -> anyhow::Result<()> {
     let config = StreamableHttpServerConfig::default().enforce_origin_validation();
-    let service: StreamableHttpService<Server, LocalSessionManager> = StreamableHttpService::new(move || Ok(Server::new(core.clone())), Default::default(), config);
+    let service: StreamableHttpService<Server, LocalSessionManager> = StreamableHttpService::new(move || Ok(Server::new(core.clone())), Arc::new(sessions()), config);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     axum::serve(listener, axum::Router::new().nest_service("/mcp", service)).await?;
     Ok(())
