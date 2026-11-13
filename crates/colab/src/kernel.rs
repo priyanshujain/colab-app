@@ -43,6 +43,7 @@ pub struct ColabKernel {
     pub runtime: Arc<Runtime>,
     pub kernel_id: String,
     pub session: String,
+    pub assigned: Option<chrono::DateTime<chrono::Utc>>,
     notebook: PathBuf,
     shared: Arc<Shared>,
     commands: mpsc::UnboundedSender<Command>,
@@ -51,6 +52,7 @@ pub struct ColabKernel {
 impl Colab {
     pub async fn start(&self, notebook: &Path, variant: Variant, accelerator: Option<&str>, high_ram: bool) -> Result<ColabKernel> {
         let a = self.assign(variant, accelerator, high_ram).await?;
+        let assigned = Some(chrono::Utc::now());
         let runtime = Arc::new(Runtime::new(self.clone(), a.endpoint.clone(), &a.runtime_proxy_info));
         let mut created = runtime.jupyter(Method::POST, "/api/kernels").await;
         for _ in 0..KERNEL_CREATE_RETRIES {
@@ -63,8 +65,8 @@ impl Colab {
         match created {
             Ok(k) if k["id"].is_string() => {
                 let kernel_id = k["id"].as_str().unwrap().to_string();
-                store::save(&store::default_path(), notebook, &store::Saved { endpoint: a.endpoint.clone(), kernel_id: kernel_id.clone() })?;
-                Ok(ColabKernel::connect(runtime, kernel_id, notebook))
+                store::save(&store::default_path(), notebook, &store::Saved { endpoint: a.endpoint.clone(), kernel_id: kernel_id.clone(), assigned })?;
+                Ok(ColabKernel::connect(runtime, kernel_id, assigned, notebook))
             }
             other => {
                 self.unassign(&a.endpoint).await?;
@@ -86,17 +88,17 @@ impl Colab {
             store::remove(&path, notebook)?;
             return Ok(None);
         }
-        Ok(Some(ColabKernel::connect(runtime, saved.kernel_id, notebook)))
+        Ok(Some(ColabKernel::connect(runtime, saved.kernel_id, saved.assigned, notebook)))
     }
 }
 
 impl ColabKernel {
-    pub fn connect(runtime: Arc<Runtime>, kernel_id: String, notebook: &Path) -> Self {
+    pub fn connect(runtime: Arc<Runtime>, kernel_id: String, assigned: Option<chrono::DateTime<chrono::Utc>>, notebook: &Path) -> Self {
         let shared = Arc::new(Shared { status: Mutex::new(KernelStatus::Connecting), executions: Mutex::default(), events: broadcast::channel(1024).0, seen: Mutex::default(), logged: Mutex::default() });
         let (commands, rx) = mpsc::unbounded_channel();
         let session = uuid::Uuid::new_v4().to_string();
         tokio::spawn(run(runtime.clone(), kernel_id.clone(), session.clone(), shared.clone(), rx));
-        Self { runtime, kernel_id, session, notebook: notebook.into(), shared, commands }
+        Self { runtime, kernel_id, session, assigned, notebook: notebook.into(), shared, commands }
     }
 
     pub fn set_notebook(&mut self, notebook: &Path) {
@@ -109,7 +111,7 @@ impl ColabKernel {
 
     pub fn detach(self) -> Result<()> {
         let _ = self.commands.send(Command::Close);
-        store::save(&store::default_path(), &self.notebook, &store::Saved { endpoint: self.runtime.endpoint.clone(), kernel_id: self.kernel_id.clone() })
+        store::save(&store::default_path(), &self.notebook, &store::Saved { endpoint: self.runtime.endpoint.clone(), kernel_id: self.kernel_id.clone(), assigned: self.assigned })
     }
 
     pub async fn release(self) -> Result<()> {

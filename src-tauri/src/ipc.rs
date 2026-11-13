@@ -44,6 +44,8 @@ pub enum Variant {
 pub struct ColabInfo {
     pub eligible_gpus: Vec<String>,
     pub eligible_tpus: Vec<String>,
+    pub balance: f64,
+    pub hourly_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

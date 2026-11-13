@@ -78,6 +78,11 @@ async fn kernel_state(app: App<'_>, path: String) -> Result<KernelStatusEvent> {
 }
 
 #[tauri::command]
+async fn runtime_started(app: App<'_>, path: String) -> Result<Option<String>> {
+    app.runtime_started(&path).await.map_err(err)
+}
+
+#[tauri::command]
 fn diagnostics(app: App<'_>, path: String) -> Result<Vec<Diagnostics>> {
     app.diagnostics(&path).map_err(err)
 }
@@ -283,7 +288,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            open_notebook, rename_notebook, edit_cell, run_cell, run_all, interrupt, restart, select_kernel, kernel_state, diagnostics, send_comm,
+            open_notebook, rename_notebook, edit_cell, run_cell, run_all, interrupt, restart, select_kernel, kernel_state, runtime_started, diagnostics, send_comm,
             sign_in, sign_out, auth_state, colab_info, list_runtimes, detach, release, clone_link,
             completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu, window_startup, list_secrets, set_secret, delete_secret
         ])

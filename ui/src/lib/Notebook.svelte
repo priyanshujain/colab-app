@@ -11,6 +11,8 @@
   import { label, pressed } from './settings'
   import { alerts, settings } from './state.svelte'
   import type { KernelStatus } from '../bindings/KernelStatus'
+  import type { ColabInfo } from '../bindings/ColabInfo'
+  import { duration } from './timing'
   import Cell from './Cell.svelte'
   import FileName from './FileName.svelte'
   import Find from './Find.svelte'
@@ -37,7 +39,7 @@
   let reveal = $state<{ id: string; line: number; character: number } | null>(null)
   let formatting = new Set<string>()
   let width = $state(1200)
-  let menu = $state<'more' | 'format' | null>(null)
+  let menu = $state<'more' | 'format' | 'kernel' | null>(null)
   let finding = $state(false)
   let finder = $state<Find>()
   let found = $state<Match[]>([])
@@ -47,6 +49,23 @@
   let dirty = $state(false)
   let status = $state<KernelStatus>('disconnected')
   let kind = $state<'local' | 'colab'>('local')
+  let started = $state<number | null>(null)
+  let runtimeName = $state('')
+  let usage = $state<ColabInfo | null>(null)
+  let now = $state(Date.now())
+  const hours = $derived(started === null ? 0 : (now - started) / 3_600_000)
+  const units = (n: number) => `${n.toFixed(2)} compute units`
+  $effect(() => {
+    if (menu !== 'kernel') return
+    const tick = setInterval(() => (now = Date.now()), 1000)
+    return () => clearInterval(tick)
+  })
+  $effect(() => void (started === null && menu === 'kernel' && (menu = null)))
+  function showUsage() {
+    menu = menu === 'kernel' ? null : 'kernel'
+    now = Date.now()
+    if (menu === 'kernel') api.colabInfo().then((i) => (usage = i), () => (usage = null))
+  }
   const wide = $derived(width >= 960)
   const live = $derived(status !== 'disconnected' && status !== 'dead')
 
@@ -224,7 +243,24 @@
 <Titlebar>
   {#snippet center()}<FileName {path} {dirty} onrename={rename} onmenu={() => api.fileMenu(path)} />{/snippet}
   {#snippet trail()}
-    <span class="kernel {status}" title="Kernel {status}"></span>
+    {#if started !== null}
+      <div class="more">
+        <button class="kernel {status}" onclick={showUsage} title="Kernel {status}, show Colab usage" aria-label="Show Colab usage" aria-expanded={menu === 'kernel'}></button>
+        {#if menu === 'kernel'}
+          <div class="menu usage">
+            <strong>{runtimeName}</strong>
+            <span>Running for {duration(now - started)}</span>
+            {#if usage}
+              <span>Used about {units(usage.hourly_rate * hours)}</span>
+              <span>Using {units(usage.hourly_rate)} per hour</span>
+              <span>{usage.balance.toFixed(1)} compute units left</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <span class="kernel {status}" title="Kernel {status}"></span>
+    {/if}
     <button class="icon-button" onclick={onsettings} title="Settings" aria-label="Settings"><Icon d={GEAR} /></button>
   {/snippet}
 </Titlebar>
@@ -258,7 +294,7 @@
     </div>
   {/if}
   <span class="grow"></span>
-  <KernelBar {api} {path} {wide} bind:status bind:kind />
+  <KernelBar {api} {path} {wide} bind:status bind:kind bind:started bind:label={runtimeName} />
   {#if finding}
     <Find bind:this={finder} sources={cells.map((c) => c.source)} start={selected} onfound={(m) => (found = m)} onreveal={(m) => (show(m.cell, false), (match = { ...m }))} onreplace={(i, source) => edit({ kind: 'source', cell_id: cells[i].id, source })} onclose={closeFind} />
   {/if}
@@ -322,6 +358,9 @@
   .kernel.idle, .kernel.busy { background: var(--ok); }
   .kernel.connecting, .kernel.reconnecting { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
   .kernel.dead { background: var(--error); }
+  button.kernel { padding: 0; border: none; min-width: 0; cursor: pointer; }
+  .menu.usage { position: fixed; top: calc(var(--titlebar-h) + 4px); left: auto; right: 12px; width: max-content; padding: 10px 12px; gap: 4px; color: var(--muted); font-size: 0.923rem; white-space: nowrap; }
+  .menu.usage strong { color: var(--fg); font-weight: 500; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .more { position: relative; flex: none; }
   .menu { position: absolute; left: 0; top: calc(100% + 6px); min-width: 190px; z-index: 20; background: var(--popover); border: 1px solid var(--border-strong); border-radius: 8px; padding: 4px; box-shadow: 0 12px 32px #0008; display: flex; flex-direction: column; }

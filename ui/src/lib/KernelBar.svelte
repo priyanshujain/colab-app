@@ -7,8 +7,9 @@
   import type { Variant } from '../bindings/Variant'
   import type { Api } from './ipc'
   import { account, settings } from './state.svelte'
+  import { duration } from './timing'
 
-  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: 'local' | 'colab' } = $props()
+  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local'), started = $bindable(null), label = $bindable('') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: 'local' | 'colab'; started?: number | null; label?: string } = $props()
 
   let active = $state<KernelChoice | null>(null)
   let info = $state<ColabInfo | null>(null)
@@ -24,7 +25,18 @@
   ])
   const live = $derived(status !== 'disconnected' && status !== 'dead')
   const onColab = $derived(active?.kind === 'colab' && live)
-  const label = $derived(!active ? 'No kernel' : active.kind === 'local' ? 'Local' : `Colab ${active.accelerator ?? (active.variant === 'DEFAULT' ? 'CPU' : active.variant)}`)
+  const ready = $derived(onColab && (status === 'idle' || status === 'busy'))
+  $effect(() => void (label = name))
+  const name = $derived(!active ? 'No kernel' : active.kind === 'local' ? 'Local' : `Colab ${active.accelerator ?? (active.variant === 'DEFAULT' ? 'CPU' : active.variant)}`)
+
+  let now = $state(Date.now())
+  $effect(() => {
+    started = null
+    if (!ready) return
+    api.runtimeStarted(path).then((t) => (started = t ? Date.parse(t) : null), () => {})
+    const tick = setInterval(() => (now = Date.now()), 1000)
+    return () => clearInterval(tick)
+  })
 
   const attempt = (f: () => Promise<unknown>) => f().then(() => (error = ''), (e) => (error = String(e)))
   const refresh = () => attempt(async () => (info = await api.colabInfo()))
@@ -61,7 +73,8 @@
 
 <div class="bar">
   {#if error}<span class="error" title={error}>{error}</span>{/if}
-  {#if wide && active}<span class="status">{label} <span class="state {status}">{status}</span></span>{/if}
+  {#if wide && active}<span class="status">{name} <span class="state {status}">{status}</span></span>{/if}
+  {#if wide && started !== null}<span class="status" title="Time since the Colab runtime started">{duration(now - started)}</span>{/if}
   <select value={kind} onchange={(e) => choose(e.currentTarget.value as 'local' | 'colab')} aria-label="Kernel" title="Kernel">
     <option value="local">Local .venv</option>
     <option value="colab">Colab</option>

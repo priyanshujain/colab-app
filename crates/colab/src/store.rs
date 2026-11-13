@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 pub struct Saved {
     pub endpoint: String,
     pub kernel_id: String,
+    #[serde(default)]
+    pub assigned: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub fn default_path() -> PathBuf {
@@ -48,4 +50,21 @@ pub fn remove(path: &Path, notebook: &Path) -> Result<()> {
         write(path, &map)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtimes_saved_before_allocation_time_still_load_and_new_ones_keep_it() {
+        let path = std::env::temp_dir().join(format!("colab-runtimes-{}.json", uuid::Uuid::new_v4()));
+        let (old, new) = (Path::new("/work/old.ipynb"), Path::new("/work/new.ipynb"));
+        std::fs::write(&path, format!(r#"{{"{}": {{"endpoint": "m-s-old", "kernel_id": "k-old"}}}}"#, key(old))).unwrap();
+        let assigned = Some("2026-11-13T08:11:32Z".parse().unwrap());
+        save(&path, new, &Saved { endpoint: "m-s-new".into(), kernel_id: "k-new".into(), assigned }).unwrap();
+        assert_eq!(get(&path, old).unwrap(), Some(Saved { endpoint: "m-s-old".into(), kernel_id: "k-old".into(), assigned: None }));
+        assert_eq!(get(&path, new).unwrap().unwrap().assigned, assigned);
+        std::fs::remove_file(path).unwrap();
+    }
 }

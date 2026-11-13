@@ -42,6 +42,7 @@ export function mockApi(): Api {
   let execution = 0
   let choice: KernelChoice | null = null
   let started = false
+  let assigned: string | null = null
   let auth: AuthState = { state: 'signed_out' }
   let reply: ((v: string) => void) | null = null
   const outputs: ((e: CellOutputs) => void)[] = []
@@ -132,6 +133,7 @@ export function mockApi(): Api {
     selectKernel: async (_, c) => {
       choice = c
       started = c.kind === 'colab'
+      assigned = started ? new Date(Date.now() - 4_000_000).toISOString() : null
       if (!started) return status('disconnected')
       status('connecting')
       await sleep(500)
@@ -232,6 +234,7 @@ export function mockApi(): Api {
     onAgentFocus: async () => () => {},
     windowStartup: async () => null,
     kernelState: async (path) => ({ path, status: 'disconnected', choice: null }),
+    runtimeStarted: async () => assigned,
     diagnostics: async () => [],
     onMenu: async () => () => {},
   }

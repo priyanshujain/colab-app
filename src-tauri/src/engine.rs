@@ -354,6 +354,14 @@ impl Core {
         Ok(KernelStatusEvent { path: open.key.clone(), status: guard.as_ref().map_or(KernelStatus::Disconnected, |s| s.active.k().status()), choice })
     }
 
+    pub async fn runtime_started(&self, path: &str) -> Result<Option<String>> {
+        let open = self.get(path)?;
+        Ok(match open.kernel.read().await.as_ref().map(|s| &s.active) {
+            Some(Active::Colab(k)) => k.assigned.map(|t| t.to_rfc3339()),
+            _ => None,
+        })
+    }
+
     pub fn diagnostics(&self, path: &str) -> Result<Vec<Diagnostics>> {
         let open = self.get(path)?;
         let Some(project) = open.project.get() else { return Ok(vec![]) };
@@ -824,7 +832,7 @@ impl Core {
 
     pub async fn colab_info(&self) -> Result<ColabInfo> {
         let i = self.colab().await?.ccu_info().await?;
-        Ok(ColabInfo { eligible_gpus: i.eligible_gpus, eligible_tpus: i.eligible_tpus })
+        Ok(ColabInfo { eligible_gpus: i.eligible_gpus, eligible_tpus: i.eligible_tpus, balance: i.balance, hourly_rate: i.hourly_rate })
     }
 
     pub async fn list_runtimes(&self) -> Result<Vec<ipc::Runtime>> {

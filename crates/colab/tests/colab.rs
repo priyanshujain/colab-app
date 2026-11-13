@@ -78,7 +78,7 @@ impl Proxy {
         let tokens = Tokens { client: OAuthClient::default(), refresh_token: "r".into(), access_token: "a".into(), expiry: None };
         let colab = Colab::new(Arc::new(Auth::new(tokens, false)));
         let info = ProxyInfo { url: self.url.clone(), token: "proxy-token".into(), token_expires_in_seconds: 3600 };
-        ColabKernel::connect(Arc::new(Runtime::new(colab, "m-s-test".into(), &info)), "k1".into(), "/tmp/x.ipynb".as_ref())
+        ColabKernel::connect(Arc::new(Runtime::new(colab, "m-s-test".into(), &info)), "k1".into(), None, "/tmp/x.ipynb".as_ref())
     }
 }
 
