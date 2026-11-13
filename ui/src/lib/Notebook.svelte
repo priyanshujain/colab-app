@@ -319,8 +319,8 @@
   .sep { width: 1px; height: 16px; background: var(--border); margin: 0 6px; flex: none; }
   .grow { flex: 1; min-width: 8px; }
   .kernel { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); margin: 0 8px; flex: none; }
-  .kernel.idle { background: var(--ok); }
-  .kernel.busy, .kernel.connecting, .kernel.reconnecting { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+  .kernel.idle, .kernel.busy { background: var(--ok); }
+  .kernel.connecting, .kernel.reconnecting { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
   .kernel.dead { background: var(--error); }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .more { position: relative; flex: none; }
