@@ -12,4 +12,5 @@ Uses `mcp__colab__*` tools. The app hosts them: if a call says the app is not ru
 - Fix failures by editing and re-running the cell, not by adding copies.
 - Ask before installing packages, mounting Drive or big downloads.
 - Non-text outputs show as `[image/png]`; print numbers you need.
-- When done, ask the user whether to shut down the kernel; `release_kernel` only on yes.
+- When done with a Colab runtime connected, ask whether to release it, and in the same turn start an idle timer: a background Bash `sleep 1800` (`run_in_background: true`). When the timer fires and the user has not replied since, call `release_kernel`, then `close_notebook`, and say so. A user reply cancels that timer. Never leave a Colab runtime idle beyond 30 minutes.
+- After `release_kernel`, call `close_notebook` to close its window. With a local kernel, call `close_notebook` when the work is done.
