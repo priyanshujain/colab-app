@@ -130,6 +130,7 @@ pub struct AgentOpen {
 
 pub mod events {
     pub const AGENT_OPEN: &str = "agent-open";
+    pub const AGENT_CLOSE: &str = "agent-close";
     pub const AGENT_FOCUS: &str = "agent-focus";
     pub const CELL_OUTPUTS: &str = "cell-outputs";
     pub const KERNEL_STATUS: &str = "kernel-status";

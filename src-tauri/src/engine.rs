@@ -347,6 +347,16 @@ impl Core {
         Ok(opened.path)
     }
 
+    pub async fn agent_close(&self, path: &str) -> Result<()> {
+        let open = self.get(path)?;
+        let _run = open.run.lock().await;
+        self.drop_kernel(&open, false).await?;
+        open.doc.flush()?;
+        self.notebooks.lock().unwrap().remove(&open.key);
+        self.send(events::AGENT_CLOSE, AgentOpen { path: open.key.clone() });
+        Ok(())
+    }
+
     pub async fn kernel_state(&self, path: &str) -> Result<KernelStatusEvent> {
         let open = self.get(path)?;
         let guard = open.kernel.read().await;

@@ -278,6 +278,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let emit: crate::engine::Emit = Arc::new(move |event, payload| match (event, payload.get("path").and_then(|p| p.as_str())) {
                 (ipc::events::AGENT_OPEN, Some(path)) => windows::agent_open(&handle, path),
+                (ipc::events::AGENT_CLOSE, Some(path)) => windows::agent_close(&handle, path),
                 _ => drop(handle.emit(event, payload)),
             });
             let core = Core::new(emit, app.path().app_data_dir()?);

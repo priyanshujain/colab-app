@@ -142,6 +142,13 @@ pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
     let _ = result.map_err(|e| log::error!("agent open {path}: {e}"));
 }
 
+pub fn agent_close<R: Runtime>(app: &AppHandle<R>, path: &str) {
+    let owner = registry(app).owner(path).map(String::from);
+    if let Some(window) = owner.and_then(|o| app.get_webview_window(&o)) {
+        let _ = app.run_on_main_thread(move || drop(window.close().map_err(|e| log::error!("agent close: {e}")))).map_err(|e| log::error!("agent close: {e}"));
+    }
+}
+
 pub fn closed<R: Runtime>(app: &AppHandle<R>, label: &str) {
     registry(app).close(label);
 }

@@ -129,6 +129,12 @@ impl Server {
         Ok("released".into())
     }
 
+    #[tool(description = "Close a notebook and its app window once work is done; keeps a Colab runtime assigned unless release_kernel ran first")]
+    async fn close_notebook(&self, Parameters(a): Parameters<NotebookArgs>) -> Reply {
+        self.core.agent_close(&a.path).await.map_err(fail)?;
+        Ok("closed".into())
+    }
+
     #[tool(description = "Kernel status and runtime of an open notebook")]
     async fn kernel_status(&self, Parameters(a): Parameters<NotebookArgs>) -> Reply {
         let state = self.core.kernel_state(&a.path).await.map_err(fail)?;

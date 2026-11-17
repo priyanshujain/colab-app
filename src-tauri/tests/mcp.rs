@@ -98,6 +98,13 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     let (out, _) = call("run_cell", json!({"path": p, "cell_id": "setup"})).await;
     assert_eq!(out, "");
     assert_eq!(call("release_kernel", json!({"path": p})).await, ("released".into(), false));
+
+    assert_eq!(call("close_notebook", json!({"path": p})).await, ("closed".into(), false));
+    assert!(events.lock().unwrap().iter().any(|(n, v)| n == "agent-close" && v["path"] == p.as_str()), "app window was not asked to close the notebook");
+    assert_eq!(call("list_notebooks", json!({})).await, (q.clone(), false));
+    let (msg, err) = call("read_notebook", json!({"path": p})).await;
+    assert!(err && msg.contains("not open"), "{msg}");
+    assert!(std::fs::read_to_string(&path).unwrap().contains("data = [3, 1, 2]"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
