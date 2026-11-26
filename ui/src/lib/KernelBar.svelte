@@ -11,7 +11,7 @@
   import { account, settings } from './state.svelte'
   import { duration } from './timing'
 
-  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local'), started = $bindable(null), label = $bindable('') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: string; started?: number | null; label?: string } = $props()
+  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local'), started = $bindable(null), label = $bindable(''), detail = $bindable('') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: string; started?: number | null; label?: string; detail?: string } = $props()
 
   let active = $state<KernelChoice | null>(null)
   let info = $state<ColabInfo | null>(null)
@@ -48,6 +48,7 @@
   const name = $derived(active ? describe(active) : 'Not connected')
   const phase = $derived(!active ? '' : hostOf(active)?.available === false ? 'unavailable' : active.kind === 'local' && status === 'disconnected' ? '' : status)
   $effect(() => void (label = name))
+  $effect(() => void (detail = active && active.kind !== 'colab' ? kernelsOf(active).map(typeName).join(', ') : active?.high_ram ? 'High RAM' : ''))
   $effect(() => void (kind = active?.kind ?? 'local'))
 
   let probing: Promise<unknown> | null = null
@@ -66,7 +67,7 @@
   let now = $state(Date.now())
   $effect(() => {
     started = null
-    if (!ready) return
+    if (!active || (status !== 'idle' && status !== 'busy')) return
     api.runtimeStarted(path).then((t) => (started = t ? Date.parse(t) : null), () => {})
     const tick = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(tick)
@@ -109,8 +110,8 @@
 
 <div class="bar">
   {#if error}<span class="error" title={error}>{error}</span>{/if}
-  {#if wide}<span class="status">{name}{#if phase}{' '}<span class="state {phase}">{phase}</span>{/if}</span>{/if}
-  {#if wide && started !== null}<span class="status" title="Time since the Colab runtime started">{duration(now - started)}</span>{/if}
+  {#if wide && (phase || !active)}<span class="status" class:dead={phase === 'dead'}>{phase || 'Not connected'}</span>{/if}
+  {#if wide && ready && started !== null}<span class="status" title="Time since the Colab runtime started">{duration(now - started)}</span>{/if}
   <select bind:value={place} onfocus={() => (picking = true)} onblur={() => (picking = false)} onpointerdown={refreshHosts} aria-label="Kernel location" title="Kernel location">
     <option value="local">{machine?.name ?? ''}</option>
     {#each hosts as h (h.label)}<option value="remote:{h.label}" disabled={!h.available}>{h.label}{h.available ? '' : ' (unavailable)'}</option>{/each}
@@ -127,9 +128,11 @@
       {#each types as k (k.id)}<option>{typeName(k)}</option>{:else}<option>Unknown</option>{/each}
     </select>
   {/if}
-  {#if current && active?.kind === 'colab'}
-    <button class="outline" onclick={() => attempt(() => api.detach(path))} title="Disconnect but keep the runtime">Detach</button>
-    <button class="outline" onclick={() => attempt(() => api.release(path))} title="Release the runtime">Release</button>
+  {#if current && live && active?.kind === 'local'}
+    <button class="outline" onclick={() => attempt(() => api.detach(path))} title="Shut down the kernel. Variables are lost">Disconnect</button>
+  {:else if current && active && active.kind !== 'local'}
+    <button class="outline" onclick={() => attempt(() => api.detach(path))} title={active.kind === 'colab' ? 'Disconnect but keep the runtime' : 'Disconnect but keep the kernel running on the host'}>Detach</button>
+    <button class="outline" onclick={() => attempt(() => api.release(path))} title={active.kind === 'colab' ? 'Release the runtime' : 'Shut down the kernel on the host. Variables are lost'}>Release</button>
   {:else if !current}
     <button class="primary" onclick={connect} disabled={busy || unavailable || status === 'connecting'}>{busy ? 'Connecting...' : 'Connect'}</button>
   {/if}
@@ -142,8 +145,7 @@
   .bar button { padding: 0 16px; }
   .bar select:disabled { color: var(--faint); cursor: default; }
   .status { color: color-mix(in srgb, var(--fg) 80%, transparent); white-space: nowrap; font-size: 0.923rem; margin: 0 4px; }
-  .state { color: var(--muted); margin-left: 2px; }
-  .state.dead { color: var(--error); }
+  .status.dead { color: var(--error); }
   .check { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.923rem; white-space: nowrap; }
   .check input { accent-color: var(--accent); }
   .error { color: var(--error); max-width: 220px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.923rem; }

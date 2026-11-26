@@ -143,7 +143,7 @@ export function mockApi(): Api {
       if (c.kind === 'remote' && !up.has(c.host)) throw new Error(`${c.host} is not reachable`)
       choice = c
       started = c.kind !== 'local'
-      assigned = c.kind === 'colab' ? new Date(Date.now() - 4_000_000).toISOString() : null
+      assigned = new Date(Date.now() - (c.kind === 'colab' ? 4_000_000 : 0)).toISOString()
       if (c.kind === 'local') return status('disconnected')
       status('connecting')
       await sleep(500)

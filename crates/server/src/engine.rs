@@ -57,6 +57,7 @@ impl Drop for Tasks {
 struct Session {
     active: Active,
     choice: KernelChoice,
+    started: chrono::DateTime<chrono::Utc>,
     _tasks: Tasks,
 }
 
@@ -466,10 +467,10 @@ impl Core {
 
     pub async fn runtime_started(&self, path: &str) -> Result<Option<String>> {
         let open = self.get(path)?;
-        Ok(match open.kernel.read().await.as_ref().map(|s| &s.active) {
-            Some(Active::Colab(k)) => k.assigned.map(|t| t.to_rfc3339()),
-            _ => None,
-        })
+        Ok(open.kernel.read().await.as_ref().map(|s| match &s.active {
+            Active::Colab(k) => k.assigned.unwrap_or(s.started),
+            _ => s.started,
+        }.to_rfc3339()))
     }
 
     pub fn diagnostics(&self, path: &str) -> Result<Vec<Diagnostics>> {
@@ -849,7 +850,7 @@ impl Core {
             }
         });
         let status = tokio::spawn(watch_status(self.clone(), Arc::downgrade(open)));
-        *open.kernel.write().await = Some(Session { active, choice, _tasks: Tasks(vec![comms, status]) });
+        *open.kernel.write().await = Some(Session { active, choice, started: chrono::Utc::now(), _tasks: Tasks(vec![comms, status]) });
         self.apply_secrets(open).await;
     }
 

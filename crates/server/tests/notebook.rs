@@ -108,7 +108,11 @@ async fn local_notebook_runs_saves_merges_and_uses_tooling() {
 
     core.format(&p, Some("plot")).await.unwrap();
     wait_file(&path, |v| v["cells"][1]["source"] == json!(["total = sum(rows)"])).await;
+    let started = chrono::DateTime::parse_from_rfc3339(&core.runtime_started(&p).await.unwrap().expect("a connected local kernel reports when it started")).unwrap();
+    let age = chrono::Utc::now().signed_duration_since(started);
+    assert!(age >= chrono::Duration::zero() && age < chrono::Duration::minutes(5), "{started}");
     core.detach(&p).await.unwrap();
+    assert_eq!(core.runtime_started(&p).await.unwrap(), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

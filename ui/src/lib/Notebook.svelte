@@ -51,6 +51,7 @@
   let kind = $state('local')
   let started = $state<number | null>(null)
   let runtimeName = $state('')
+  let kernelDetail = $state('')
   let usage = $state<ColabInfo | null>(null)
   let now = $state(Date.now())
   const hours = $derived(started === null ? 0 : (now - started) / 3_600_000)
@@ -61,11 +62,13 @@
     return () => clearInterval(tick)
   })
   $effect(() => void (started === null && menu === 'kernel' && (menu = null)))
-  function showUsage() {
-    menu = menu === 'kernel' ? null : 'kernel'
+  function showKernel() {
+    menu = 'kernel'
     now = Date.now()
-    if (menu === 'kernel') api.colabInfo().then((i) => (usage = i), () => (usage = null))
+    usage = null
+    if (kind === 'colab') api.colabInfo().then((i) => (usage = i), () => {})
   }
+  const hideKernel = () => void (menu === 'kernel' && (menu = null))
   const wide = $derived(width >= 960)
   const live = $derived(status !== 'disconnected' && status !== 'dead')
 
@@ -244,12 +247,14 @@
   {#snippet center()}<FileName {path} {dirty} onrename={rename} onmenu={() => api.fileMenu(path)} />{/snippet}
   {#snippet trail()}
     {#if started !== null}
-      <div class="more">
-        <button class="kernel {status}" onclick={showUsage} title="Kernel {status}, show Colab usage" aria-label="Show Colab usage" aria-expanded={menu === 'kernel'}></button>
+      <div class="more" role="presentation" onmouseenter={showKernel} onmouseleave={hideKernel}>
+        <button class="kernel {status}" onfocus={showKernel} onblur={hideKernel} aria-label="Kernel {status}, show details" aria-expanded={menu === 'kernel'}></button>
         {#if menu === 'kernel'}
           <div class="menu usage pop">
             <strong>{runtimeName}</strong>
-            <span>Running for {duration(now - started)}</span>
+            {#if kernelDetail}<span>{kernelDetail}</span>{/if}
+            <span>Kernel {status}</span>
+            <span>{kind === 'colab' ? 'Running' : 'Connected'} for {duration(now - started)}</span>
             {#if usage}
               <span>Used about {units(usage.hourly_rate * hours)}</span>
               <span>Using {units(usage.hourly_rate)} per hour</span>
@@ -296,7 +301,7 @@
     </div>
   {/if}
   <span class="grow"></span>
-  <KernelBar {api} {path} {wide} bind:status bind:kind bind:started bind:label={runtimeName} />
+  <KernelBar {api} {path} {wide} bind:status bind:kind bind:started bind:label={runtimeName} bind:detail={kernelDetail} />
   {#if finding}
     <Find bind:this={finder} sources={cells.map((c) => c.source)} start={selected} onfound={(m) => (found = m)} onreveal={(m) => (show(m.cell, false), (match = { ...m }))} onreplace={(i, source) => edit({ kind: 'source', cell_id: cells[i].id, source })} onclose={closeFind} />
   {/if}
