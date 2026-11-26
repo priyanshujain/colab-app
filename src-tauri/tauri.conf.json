@@ -9,6 +9,7 @@
     "beforeBuildCommand": "npm --prefix \"$(git rev-parse --show-toplevel)/ui\" run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -17,6 +18,7 @@
         "height": 850,
         "minWidth": 700,
         "minHeight": 500,
+        "transparent": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": {

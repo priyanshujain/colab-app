@@ -11,6 +11,7 @@ pub struct Registry {
 }
 
 pub const LOCAL: &str = "local";
+pub const SETTINGS: &str = "settings";
 
 pub fn host_of(label: &str) -> String {
     let hex = label.strip_prefix("remote-").and_then(|r| r.rsplit_once('-')).map(|(h, _)| h);
@@ -47,7 +48,7 @@ impl Registry {
         if let Some(owner) = self.owner(host, path) {
             return Place::Focus(owner.into());
         }
-        let label = windows.iter().find(|l| host_of(l) == host && self.is_blank(l)).cloned().unwrap_or_else(|| {
+        let label = windows.iter().find(|l| *l != SETTINGS && host_of(l) == host && self.is_blank(l)).cloned().unwrap_or_else(|| {
             let label = next_label(host);
             self.startup.insert(label.clone(), action.into());
             label
@@ -82,9 +83,13 @@ fn next_label(host: &str) -> String {
 }
 
 fn build<R: Runtime>(app: &AppHandle<R>, label: &str) -> tauri::Result<()> {
-    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default()).title("").inner_size(1200.0, 850.0).min_inner_size(700.0, 500.0);
+    open(app, label, WebviewUrl::default(), (1200.0, 850.0), (700.0, 500.0))
+}
+
+fn open<R: Runtime>(app: &AppHandle<R>, label: &str, url: WebviewUrl, size: (f64, f64), min: (f64, f64)) -> tauri::Result<()> {
+    let builder = WebviewWindowBuilder::new(app, label, url).title("").inner_size(size.0, size.1).min_inner_size(min.0, min.1);
     #[cfg(target_os = "macos")]
-    let builder = builder.title_bar_style(TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(tauri::LogicalPosition::new(9.0, 25.0));
+    let builder = builder.transparent(true).title_bar_style(TitleBarStyle::Overlay).hidden_title(true).traffic_light_position(tauri::LogicalPosition::new(9.0, 25.0));
     builder.build().map(drop)
 }
 
@@ -129,18 +134,19 @@ pub fn menu<R: Runtime>(app: &AppHandle<R>, host: &str, id: &str) {
     if id.strip_prefix("open-recent:").is_some_and(|path| focus_owner(app, host, path)) {
         return;
     }
-    let result = match focused(app).filter(|w| host_of(w.label()) == host) {
-        Some(window) => send(app, &window, id),
+    let usable = |w: &tauri::WebviewWindow<R>| w.label() != SETTINGS && host_of(w.label()) == host;
+    let other = || app.webview_windows().into_values().filter(usable).min_by_key(|w| !registry(app).is_blank(w.label()));
+    let result = match focused(app).filter(usable).or_else(other) {
+        Some(window) => send(app, &window, id).map(|()| focus(app, window.label())),
         None => create(app, host, id),
     };
     let _ = result.map_err(|e| log::error!("menu {id}: {e}"));
 }
 
-pub fn settings<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    let window = focused(app).filter(|w| host_of(w.label()) == LOCAL).or_else(|| app.webview_windows().into_values().find(|w| host_of(w.label()) == LOCAL));
-    let result = match window {
-        Some(window) => send(app, &window, id).map(|()| focus(app, window.label())),
-        None => create(app, LOCAL, id),
+pub fn settings<R: Runtime>(app: &AppHandle<R>, section: &str) {
+    let result = match app.get_webview_window(SETTINGS) {
+        Some(window) => window.emit_to(SETTINGS, "menu", section).map(|()| focus(app, SETTINGS)),
+        None => open(app, SETTINGS, WebviewUrl::App(format!("index.html?view=settings&section={section}").into()), (880.0, 640.0), (640.0, 480.0)),
     };
     let _ = result.map_err(|e| log::error!("settings: {e}"));
 }
@@ -242,6 +248,17 @@ mod tests {
         assert!(!windows.contains(&third));
         r.close("main");
         assert_eq!(r.place(LOCAL, "/nb/train.ipynb", &[second.clone(), "window-blank".into()], "open-recent:/nb/train.ipynb"), Place::Load("window-blank".into()));
+    }
+
+    #[test]
+    fn a_notebook_the_agent_opens_never_lands_in_the_settings_window() {
+        let mut r = Registry::default();
+        r.take_startup(SETTINGS);
+        let windows = vec![SETTINGS.to_string()];
+        let Place::Load(label) = r.place(LOCAL, "/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb") else { panic!("train was not given a window") };
+        assert_ne!(label, SETTINGS);
+        assert_eq!(r.take_startup(&label).as_deref(), Some("open-recent:/nb/train.ipynb"));
+        assert_eq!(r.place(LOCAL, "/nb/eval.ipynb", &[SETTINGS.to_string(), "window-blank".into()], "open-recent:/nb/eval.ipynb"), Place::Load("window-blank".into()));
     }
 
     #[test]

@@ -5,10 +5,13 @@
   import Widget from './Widget.svelte'
   import { WIDGET, frameDoc, needsFrame, pick, str } from './mime'
   import { renderMarkdown, renderMath } from './math'
+  import { activeTheme } from '../settings'
+  import { settings, system } from '../state.svelte'
   let { output, path }: { output: Output, path: string } = $props()
   const data = $derived(output.output_type === 'stream' || output.output_type === 'error' ? {} : output.data)
   const mime = $derived(pick(data))
   const value = $derived(mime ? str(data[mime]) : '')
+  const theme = $derived(activeTheme(settings, system.dark))
 </script>
 
 {#if output.output_type === 'stream'}
@@ -18,7 +21,7 @@
 {:else if mime === WIDGET}
   <Widget {path} modelId={(data[WIDGET] as { model_id: string }).model_id} fallback={str(data['text/plain'] ?? '')} />
 {:else if mime && needsFrame(mime, value)}
-  <Frame doc={frameDoc(mime, data[mime])} />
+  <Frame doc={frameDoc(mime, data[mime], !theme.light, theme.vars['--fg'])} />
 {:else if mime === 'text/html'}
   <div class="html">{@html value}</div>
 {:else if mime === 'image/svg+xml'}

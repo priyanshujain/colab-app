@@ -63,7 +63,7 @@
   }
 </script>
 
-<div class="find" role="search">
+<div class="find pop" role="search">
   <button class="expand" class:open={replacing} onclick={() => (replacing = !replacing)} title="Toggle replace" aria-label="Toggle replace">›</button>
   <div class="rows">
     <div class="row">
@@ -89,21 +89,24 @@
 </div>
 
 <style>
-  .find { position: absolute; top: calc(100% + 2px); right: 24px; z-index: 30; display: flex; gap: 2px; padding: 4px 6px 4px 2px; background: var(--popover); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 8px 24px #0007; }
+  .find { position: absolute; top: calc(100% + 4px); right: 24px; z-index: 30; display: flex; gap: 2px; padding: 5px 6px 5px 3px; border-radius: 18px; transform-origin: top right; }
   .rows { display: flex; flex-direction: column; gap: 4px; }
   .row { display: flex; align-items: center; gap: 2px; }
-  .input { display: flex; align-items: center; width: 280px; background: var(--editor-bg); border: 1px solid var(--border); border-radius: 4px; padding-right: 2px; }
-  .input:focus-within { border-color: var(--accent-line); }
+  .input { display: flex; align-items: center; width: 280px; background: var(--field); border: 1px solid var(--hairline); border-radius: 999px; padding: 0 3px 0 6px; }
+  .input:focus-within { border-color: var(--accent-line); box-shadow: var(--ring); }
+  .input input:focus { box-shadow: none; }
   .input input { flex: 1; min-width: 0; border: none; background: transparent; padding: 3px 6px; font-size: 0.962rem; }
-  .input button { height: 20px; min-width: 22px; padding: 0 3px; justify-content: center; font: 0.846rem var(--mono); color: var(--muted); border-radius: 3px; }
-  .input button.on { color: var(--fg); background: var(--accent-soft); border-color: var(--accent-line); }
+  .input button { height: 20px; min-width: 24px; padding: 0 4px; justify-content: center; font: 0.846rem var(--mono); color: var(--muted); }
+  .input button.on { color: var(--fg); background: var(--accent-soft); box-shadow: inset 0 0 0 0.5px var(--accent-line); }
   .word { text-decoration: underline; text-underline-offset: 2px; }
   .count { min-width: 72px; padding: 0 6px; font-size: 0.885rem; color: var(--muted); white-space: nowrap; }
   .count.none { color: var(--error); }
   button { color: var(--muted); }
-  .icon { width: 24px; height: 24px; padding: 0; justify-content: center; }
-  .text { height: 24px; padding: 0 8px; }
-  .expand { width: 18px; padding: 0; justify-content: center; align-self: stretch; font-size: 1.1rem; transition: transform 120ms; }
+  .icon { width: 26px; height: 26px; padding: 0; justify-content: center; }
+  .text { height: 26px; padding: 0 12px; background: var(--glass); box-shadow: var(--glass-rim); }
+  .expand { width: 20px; padding: 0; justify-content: center; align-self: stretch; font-size: 1.1rem; border-radius: 10px; }
   .expand.open { transform: rotate(90deg); }
-  button:hover:not(:disabled) { color: var(--fg); background: var(--hover-strong); border-color: transparent; }
+  @media (prefers-reduced-motion: no-preference) { .expand { transition: transform 120ms, color 120ms, background-color 120ms; } }
+  button:hover:not(:disabled) { color: var(--fg); background: var(--glass-hover); }
+  .text:hover:not(:disabled) { background: var(--glass-strong); }
 </style>

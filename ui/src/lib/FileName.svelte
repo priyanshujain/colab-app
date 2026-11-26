@@ -44,10 +44,10 @@
 
 <style>
   .file { position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 100%; }
-  .name { height: 26px; padding: 0 9px; font-size: 1rem; font-weight: 500; color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 24px; }
-  .name:hover:not(:disabled) { border-color: transparent; background: var(--hover-strong); }
+  .name { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 1rem; font-weight: 500; color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 24px; }
+  .name:hover:not(:disabled) { background: var(--glass-hover); }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; margin-left: -4px; }
-  input { width: 260px; max-width: 100%; height: 26px; box-sizing: border-box; padding: 0 9px; font-size: 1rem; text-align: center; }
+  input { width: 260px; max-width: 100%; height: 28px; box-sizing: border-box; padding: 0 12px; border-radius: 999px; font-size: 1rem; text-align: center; }
   .invalid { border-color: var(--error); }
-  .error { position: absolute; top: calc(100% - 4px); left: 50%; transform: translateX(-50%); z-index: 30; max-width: 360px; padding: 4px 9px; border-radius: 5px; background: var(--popover); border: 1px solid color-mix(in srgb, var(--error) 37.6%, transparent); color: var(--error); font-size: 0.923rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .error { position: absolute; top: calc(100% - 4px); left: 50%; transform: translateX(-50%); z-index: 30; max-width: 360px; padding: 5px 12px; border-radius: 999px; background: var(--glass-pop); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--error) 40%, transparent), var(--glass-shadow); color: var(--error); font-size: 0.923rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

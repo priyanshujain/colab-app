@@ -11,6 +11,7 @@
   import Outputs from './outputs/Outputs.svelte'
   import { duration, lastRun } from './timing'
   let moreOpen = $state(false)
+  let more: HTMLElement | undefined = $state()
 
   let { cell, path, metadata, selected, editing, running, lsp, diagnostics, marks, match, reveal, input, onselect, onedit, onchange, onkey, onrun, onreply, first, last, onmove, ontoggle, ondelete }: {
     cell: Cell
@@ -71,10 +72,10 @@
       {#if !code && !editing}<button onclick={onedit} title="Edit (Enter)" aria-label="Edit markdown"><Icon d={PENCIL} size={13} /></button>{/if}
       {#if !code && editing}<button onclick={() => onkey('Escape')} title="Close editor (Esc)" class="label">Close</button>{/if}
       <button onclick={ondelete} title="Delete cell (D D)" aria-label="Delete cell"><Icon d={TRASH} size={13} /></button>
-      <div class="more">
+      <div class="more" bind:this={more}>
         <button onclick={() => (moreOpen = !moreOpen)} title="More actions" aria-label="More cell actions" aria-expanded={moreOpen}><Icon d={MORE} size={13} /></button>
         {#if moreOpen}
-          <div class="menu" role="menu">
+          <div class="menu pop" role="menu">
             <button role="menuitem" onclick={() => ((moreOpen = false), ontoggle())}>Convert to {code ? 'Markdown' : 'Code'}<kbd>{code ? 'M' : 'Y'}</kbd></button>
           </div>
         {/if}
@@ -101,40 +102,44 @@
   </div>
 </div>
 
-<svelte:window onclick={(e) => moreOpen && !(e.target as Element).closest('.more') && (moreOpen = false)} />
+<svelte:window onmousedown={(e) => moreOpen && !more?.contains(e.target as Node) && (moreOpen = false)} onkeydown={(e) => moreOpen && e.key === 'Escape' && (moreOpen = false)} />
 
 <style>
   .cell { display: flex; padding: 6px 0; position: relative; }
   .cell::before { content: ''; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; }
   .selected::before { background: var(--border-strong); }
   .editing::before { background: var(--accent); }
-  .tools .label { padding: 0 8px; font-size: 0.85rem; }
+  .tools .label { padding: 0 9px; font-size: 0.85rem; }
   .more { position: relative; }
-  .menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; min-width: 190px; padding: 4px; background: var(--popover); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 8px 24px #0006; }
-  .menu button { width: 100%; justify-content: space-between; padding: 5px 8px; border: 0; border-radius: 4px; }
-  .menu button:hover { background: var(--hover-strong); }
+  .menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; min-width: 200px; padding: 5px; transform-origin: top right; }
+  .tools .menu button { width: 100%; justify-content: space-between; height: 28px; padding: 0 9px; border: 0; border-radius: 9px; color: var(--fg); font-size: 0.962rem; }
   .menu kbd { font: 0.8rem var(--mono); color: var(--faint); }
   .gutter { width: 64px; flex: none; display: flex; flex-direction: column; align-items: flex-end; padding: 14px 10px 0 0; gap: 4px; }
   .count { font: 0.885rem var(--mono); color: var(--faint); }
   .selected .count { color: var(--muted); }
   .run { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: 50%; color: var(--muted); opacity: 0; }
-  .cell:hover .run, .selected .run, .run.running { opacity: 1; }
-  .run:hover:not(:disabled) { color: var(--accent); }
+  .cell:hover .run, .selected .run, .run.running, .run:focus-visible { opacity: 1; }
+  .run:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .took { display: flex; align-items: center; gap: 3px; font: 0.77rem var(--mono); color: var(--faint); white-space: nowrap; }
   .took.ok svg { color: var(--ok); }
   .took.failed svg { color: var(--error); }
   .body { flex: 1; min-width: 0; margin-right: 28px; position: relative; }
-  .tools { position: absolute; top: -13px; right: 8px; z-index: 5; display: none; align-items: center; gap: 1px; padding: 1px; background: var(--popover); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 4px 12px #0006; }
-  .cell:hover .tools, .selected .tools { display: flex; }
-  .tools button { height: 22px; min-width: 24px; padding: 0 5px; justify-content: center; color: var(--muted); border: none; font-size: 0.846rem; }
-  .tools button:hover:not(:disabled) { color: var(--fg); background: var(--hover-strong); }
+  .tools { position: absolute; top: -14px; right: 8px; z-index: 5; display: flex; visibility: hidden; opacity: 0; align-items: center; gap: 1px; padding: 2px; background: var(--glass-pop); border-radius: 999px; box-shadow: var(--glass-rim), 0 4px 14px light-dark(#0000001f, #00000066); }
+  :global(.glass) .tools { -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); }
+  .cell:hover .tools, .selected .tools, .tools:focus-within { visibility: visible; opacity: 1; }
+  .tools button { height: 24px; min-width: 26px; padding: 0 6px; justify-content: center; color: var(--muted); border: none; font-size: 0.846rem; }
+  .tools button:hover:not(:disabled) { color: var(--fg); }
   .tools button:disabled { color: var(--faint); opacity: 0.5; }
-  .source { background: var(--editor-bg); border: 1px solid var(--border); border-radius: 6px; transition: border-color 0.12s; }
+  .source { background: var(--editor-bg); border: 1px solid var(--border); border-radius: var(--radius); }
   .selected .source { border-color: var(--border-strong); }
-  .editing .source { border-color: var(--accent-line); }
-  .rendered { padding: 6px 14px; border: 1px solid transparent; border-radius: 6px; }
+  .editing .source { border-color: var(--accent-line); box-shadow: var(--ring); }
+  .rendered { padding: 6px 14px; border: 1px solid transparent; border-radius: var(--radius); }
+  @media (prefers-reduced-motion: no-preference) {
+    .run, .tools { transition: opacity 120ms, color 120ms, background-color 120ms; }
+    .source { transition: border-color 120ms; }
+  }
   .stdin { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 0 2px; font: 0.962rem var(--mono); }
   .stdin label { color: var(--muted); white-space: pre; }
   .stdin input { flex: 1; max-width: 420px; font-family: var(--mono); }

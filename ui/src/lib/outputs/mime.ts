@@ -15,7 +15,6 @@ export const needsFrame = (mime: string, value: string) =>
   mime === PLOTLY || isVegaLite(mime) || mime === 'application/javascript' || (mime === 'text/html' && /<(script|iframe)\b/i.test(value))
 
 const json = (v: unknown) => JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v).replace(/</g, '\\u003c')
-const HEAD = '<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:transparent;color:#d4d4d4;color-scheme:dark;font:13px -apple-system,BlinkMacSystemFont,sans-serif}</style>'
 const RESIZE = '<script>new ResizeObserver(()=>parent.postMessage({frameHeight:document.documentElement.scrollHeight},"*")).observe(document.documentElement)</script>'
 const scripts = (...src: string[]) => src.map(s => `<script src="${s}"></script>`).join('')
 
@@ -26,14 +25,14 @@ const bokeh = (js: string) => {
   return scripts(...['', '-gl', '-widgets', '-tables'].map(s => `https://cdn.bokeh.org/bokeh/release/bokeh${s}-${version}.min.js`)) + ids.map(id => `<div id="${id}"></div>`).join('')
 }
 
-export function frameDoc(mime: string, value: unknown): string {
+export function frameDoc(mime: string, value: unknown, dark = true, fg = 'CanvasText'): string {
   const v = mime.match(VEGALITE)
   const body = mime === PLOTLY
     ? `<div id="p"></div>${scripts('https://cdn.plot.ly/plotly-3.1.0.min.js')}<script>const f=${json(value)};Plotly.newPlot("p",f.data,f.layout,{responsive:true})</script>`
     : v
-    ? `<div id="v"></div>${scripts(...(Number(v[1]) >= 6 ? ['vega@6', 'vega-lite@6', 'vega-embed@7'] : ['vega@5', `vega-lite@${v[1]}`, 'vega-embed@6']).map(p => `https://cdn.jsdelivr.net/npm/${p}`))}<script>vegaEmbed("#v",${json(value)},{theme:"dark",actions:false})</script>`
+    ? `<div id="v"></div>${scripts(...(Number(v[1]) >= 6 ? ['vega@6', 'vega-lite@6', 'vega-embed@7'] : ['vega@5', `vega-lite@${v[1]}`, 'vega-embed@6']).map(p => `https://cdn.jsdelivr.net/npm/${p}`))}<script>vegaEmbed("#v",${json(value)},{${dark ? 'theme:"dark",' : ''}actions:false})</script>`
     : mime === 'application/javascript'
     ? `${bokeh(str(value))}<div id="out"></div><script>const element=document.getElementById("out");${str(value).replace(/<\/script/gi, '<\\/script')}</script>`
     : str(value)
-  return HEAD + body + RESIZE
+  return `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:transparent;color:${fg};color-scheme:${dark ? 'dark' : 'light'};font:13px -apple-system,BlinkMacSystemFont,sans-serif}</style>${body}${RESIZE}`
 }

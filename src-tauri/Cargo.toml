@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 font-kit = "0.14"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 colab-server = { path = "../crates/server" }
 colab.workspace = true
 anyhow.workspace = true

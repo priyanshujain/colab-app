@@ -141,6 +141,11 @@ fn set_open_agent_notebooks(handle: tauri::AppHandle, on: bool) -> Result<()> {
 }
 
 #[tauri::command]
+async fn open_settings(handle: tauri::AppHandle, section: Option<String>) {
+    windows::settings(&handle, section.as_deref().unwrap_or_default())
+}
+
+#[tauri::command]
 fn server_status(handle: tauri::AppHandle) -> &'static str {
     server::of(&handle, LOCAL).status()
 }
@@ -182,7 +187,7 @@ pub fn run() {
             tray::create(app.handle())?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![call, window_startup, window_host, sign_in, list_hosts, add_host, remove_host, check_link, open_url, list_monospace_fonts, list_fonts, open_agent_notebooks, set_open_agent_notebooks, server_status, start_server, stop_server, file_menu])
+        .invoke_handler(tauri::generate_handler![call, window_startup, window_host, sign_in, list_hosts, add_host, remove_host, check_link, open_url, list_monospace_fonts, list_fonts, open_agent_notebooks, set_open_agent_notebooks, open_settings, server_status, start_server, stop_server, file_menu])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match event {

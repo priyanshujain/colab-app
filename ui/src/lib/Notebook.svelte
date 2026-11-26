@@ -22,7 +22,7 @@
   import KernelBar from './KernelBar.svelte'
   import Titlebar from './Titlebar.svelte'
 
-  let { api, path, initial, metadata, onopenfile, onsettings, onrenamed }: { api: Api; path: string; initial: CellModel[]; metadata: Record<string, unknown>; onopenfile: (file: string, line: number, character: number) => void; onsettings: () => void; onrenamed: (path: string) => void } = $props()
+  let { api, path, initial, metadata, onopenfile, onrenamed }: { api: Api; path: string; initial: CellModel[]; metadata: Record<string, unknown>; onopenfile: (file: string, line: number, character: number) => void; onrenamed: (path: string) => void } = $props()
 
   // svelte-ignore state_referenced_locally
   let cells = $state(initial)
@@ -247,7 +247,7 @@
       <div class="more">
         <button class="kernel {status}" onclick={showUsage} title="Kernel {status}, show Colab usage" aria-label="Show Colab usage" aria-expanded={menu === 'kernel'}></button>
         {#if menu === 'kernel'}
-          <div class="menu usage">
+          <div class="menu usage pop">
             <strong>{runtimeName}</strong>
             <span>Running for {duration(now - started)}</span>
             {#if usage}
@@ -261,34 +261,36 @@
     {:else}
       <span class="kernel {status}" title="Kernel {status}"></span>
     {/if}
-    <button class="icon-button" onclick={onsettings} title="Settings" aria-label="Settings"><Icon d={GEAR} /></button>
+    <button class="icon-button" onclick={() => api.openSettings()} title="Settings" aria-label="Settings"><Icon d={GEAR} /></button>
   {/snippet}
 </Titlebar>
 
 <div class="actions" bind:clientWidth={width}>
-  <button onclick={() => insert(selected + 1)} title="Add code cell (B)"><Icon d={PLUS} size={14} />Code</button>
-  {#if wide}<button onclick={() => insert(selected + 1, 'markdown')} title="Add markdown cell"><Icon d={PLUS} size={14} />Markdown</button>{/if}
-  <span class="sep"></span>
-  <button onclick={() => api.runAll(path)} title="Run all cells ({label(settings.keys.runAll)})"><Icon d={RUN_ALL} size={14} />Run all</button>
-  <button onclick={() => api.interrupt(path)} disabled={!live} title="Interrupt the kernel"><Icon d={STOP} size={14} />Interrupt</button>
+  <div class="group glass-pill">
+    <button onclick={() => insert(selected + 1)} title="Add code cell (B)"><Icon d={PLUS} size={14} />Code</button>
+    {#if wide}<button onclick={() => insert(selected + 1, 'markdown')} title="Add markdown cell"><Icon d={PLUS} size={14} />Markdown</button>{/if}
+  </div>
+  <div class="group glass-pill">
+    <button onclick={() => api.runAll(path)} title="Run all cells ({label(settings.keys.runAll)})"><Icon d={RUN_ALL} size={14} />Run all</button>
+    <button onclick={() => api.interrupt(path)} disabled={!live} title="Interrupt the kernel"><Icon d={STOP} size={14} />Interrupt</button>
+    {#if wide}<button onclick={() => api.restart(path)} disabled={!live} title="Restart the kernel"><Icon d={RESTART} size={14} />Restart</button>{/if}
+  </div>
   {#if wide}
-    <button onclick={() => api.restart(path)} disabled={!live} title="Restart the kernel"><Icon d={RESTART} size={14} />Restart</button>
-    <span class="sep"></span>
     <div class="more">
-      <button class="drop" onclick={() => (menu = menu === 'format' ? null : 'format')} title="Format ({label(settings.keys.formatCell)})" aria-expanded={menu === 'format'}>Format</button>
+      <button class="drop glass-pill" onclick={() => (menu = menu === 'format' ? null : 'format')} title="Format ({label(settings.keys.formatCell)})" aria-expanded={menu === 'format'}>Format</button>
       {#if menu === 'format'}{@render formats()}{/if}
     </div>
   {:else}
     <div class="more">
-      <button class="icon-button" onclick={() => (menu = menu === 'more' ? null : 'more')} title="More actions" aria-label="More actions" aria-expanded={menu === 'more'}><Icon d={MORE} /></button>
+      <button class="icon-button glass-pill" onclick={() => (menu = menu === 'more' ? null : 'more')} title="More actions" aria-label="More actions" aria-expanded={menu === 'more'}><Icon d={MORE} /></button>
       {#if menu === 'more'}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="menu" onclick={() => (menu = null)}>
-          <button onclick={() => insert(selected + 1, 'markdown')}>Add markdown cell</button>
-          <button onclick={() => api.restart(path)} disabled={!live}>Restart kernel</button>
-          <button onclick={() => current && format(current.id)} disabled={current?.cell_type !== 'code'}>Format cell</button>
-          <button onclick={() => format()}>Format notebook</button>
-          <button onclick={() => organize(editing ? current?.id : undefined)}>Organize imports</button>
+        <div class="menu pop" onclick={() => (menu = null)}>
+          <button onclick={() => insert(selected + 1, 'markdown')}>Add Markdown Cell</button>
+          <button onclick={() => api.restart(path)} disabled={!live}>Restart Kernel</button>
+          <button onclick={() => current && format(current.id)} disabled={current?.cell_type !== 'code'}>Format Cell</button>
+          <button onclick={() => format()}>Format Notebook</button>
+          <button onclick={() => organize(editing ? current?.id : undefined)}>Organize Imports</button>
         </div>
       {/if}
     </div>
@@ -302,7 +304,7 @@
 
 {#snippet formats()}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="menu" onclick={() => (menu = null)}>
+  <div class="menu pop" onclick={() => (menu = null)}>
     <button onclick={() => current && format(current.id)} disabled={current?.cell_type !== 'code'}>Format Cell</button>
     <button onclick={() => format()}>Format Notebook</button>
     <button onclick={() => organize(editing ? current?.id : undefined)} title={label(settings.keys.organize)}>Organize Imports</button>
@@ -345,29 +347,32 @@
   </div>
 </div>
 
-<svelte:window onkeydown={find} onmousedown={(e) => menu && !(e.target as Element).closest('.more') && (menu = null)} />
+<svelte:window onkeydown={(e) => (menu && e.key === 'Escape' ? (menu = null) : find(e))} onmousedown={(e) => menu && !(e.target as Element).closest('.more:not(.cell .more)') && (menu = null)} />
 
 <style>
-  .actions { position: relative; flex: none; display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); min-width: 0; }
-  .actions > button, .drop, .menu button { color: var(--muted); height: 28px; }
-  .actions > button:hover:not(:disabled), .drop:hover, .menu button:hover:not(:disabled) { color: var(--fg); border-color: transparent; background: var(--hover-strong); }
-  .actions > button:disabled { color: var(--faint); }
-  .sep { width: 1px; height: 16px; background: var(--border); margin: 0 6px; flex: none; }
+  .actions { position: relative; flex: none; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px 6px; box-sizing: border-box; box-shadow: inset 0 -0.5px 0 var(--hairline); background: var(--chrome); min-width: 0; }
+  .group { display: flex; flex: none; padding: 2px; gap: 0; }
+  .group button, .drop { height: 28px; padding: 0 11px; color: var(--fg); font-weight: 500; }
+  .group button:disabled { color: color-mix(in srgb, var(--fg) 38%, transparent); }
+  .drop[aria-expanded='true'], .actions .icon-button[aria-expanded='true'] { background-color: var(--glass-strong); }
+  .drop { height: 32px; padding: 0 14px; }
+  .actions .icon-button { width: 32px; height: 32px; color: var(--fg); }
+  .menu button:hover:not(:disabled) { background: var(--glass-hover); }
   .grow { flex: 1; min-width: 8px; }
   .kernel { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); margin: 0 8px; flex: none; }
   .kernel.idle, .kernel.busy { background: var(--ok); }
   .kernel.connecting, .kernel.reconnecting { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
   .kernel.dead { background: var(--error); }
   button.kernel { padding: 0; border: none; min-width: 0; cursor: pointer; }
-  .menu.usage { position: fixed; top: calc(var(--titlebar-h) + 4px); left: auto; right: 12px; width: max-content; padding: 10px 12px; gap: 4px; color: var(--muted); font-size: 0.923rem; white-space: nowrap; }
+  .menu.usage { position: fixed; top: calc(var(--titlebar-h) + 4px); left: auto; right: 12px; width: max-content; padding: 12px 14px; gap: 4px; color: var(--muted); font-size: 0.923rem; white-space: nowrap; }
   .menu.usage strong { color: var(--fg); font-weight: 500; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .more { position: relative; flex: none; }
-  .menu { position: absolute; left: 0; top: calc(100% + 6px); min-width: 190px; z-index: 20; background: var(--popover); border: 1px solid var(--border-strong); border-radius: 8px; padding: 4px; box-shadow: 0 12px 32px #0008; display: flex; flex-direction: column; }
-  .menu button { justify-content: flex-start; color: var(--fg); }
+  .menu { position: absolute; left: 0; top: calc(100% + 6px); min-width: 200px; z-index: 20; padding: 5px; display: flex; flex-direction: column; }
+  .menu button { justify-content: flex-start; color: var(--fg); height: 28px; border: none; border-radius: 9px; }
   .menu button:disabled { color: var(--faint); }
   .drop::after { content: ''; width: 0; height: 0; border: 4px solid transparent; border-top-color: currentColor; margin: 4px 0 0 -2px; }
-  .scroller { flex: 1; overflow-y: auto; outline: none; padding: 12px 0 40vh; }
+  .scroller { flex: 1; overflow-y: auto; outline: none; padding: var(--pad) var(--pad) 40vh; background: var(--surface); }
   .spacer { position: relative; max-width: 1100px; margin: 0 auto; }
   .row { position: absolute; left: 0; right: 0; }
 </style>

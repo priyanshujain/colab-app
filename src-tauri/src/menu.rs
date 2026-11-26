@@ -97,7 +97,9 @@ pub fn clicked(app: &AppHandle, event: MenuEvent) {
         let _ = crate::windows::create(app, host, "open").map_err(|e| log::error!("connect to {host}: {e}"));
     } else if let Some((host, action)) = id.strip_prefix("at:").and_then(|r| r.split_once('\t')) {
         crate::windows::menu(app, host, action);
-    } else if ["open", "clone", "settings"].contains(&id) || id.starts_with("open-recent:") {
+    } else if id == "settings" {
+        crate::windows::settings(app, "");
+    } else if ["open", "clone"].contains(&id) || id.starts_with("open-recent:") {
         crate::windows::menu(app, LOCAL, id);
     }
 }

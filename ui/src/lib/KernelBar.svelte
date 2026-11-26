@@ -128,8 +128,8 @@
     </select>
   {/if}
   {#if current && active?.kind === 'colab'}
-    <button onclick={() => attempt(() => api.detach(path))} title="Disconnect but keep the runtime">Detach</button>
-    <button onclick={() => attempt(() => api.release(path))} title="Release the runtime">Release</button>
+    <button class="outline" onclick={() => attempt(() => api.detach(path))} title="Disconnect but keep the runtime">Detach</button>
+    <button class="outline" onclick={() => attempt(() => api.release(path))} title="Release the runtime">Release</button>
   {:else if !current}
     <button class="primary" onclick={connect} disabled={busy || unavailable || status === 'connecting'}>{busy ? 'Connecting...' : 'Connect'}</button>
   {/if}
@@ -137,11 +137,14 @@
 
 <style>
   .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .bar select { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .bar select, .bar button { height: 32px; }
+  .bar select { max-width: 200px; overflow: hidden; text-overflow: ellipsis; padding-left: 13px; font-weight: 500; }
+  .bar button { padding: 0 16px; }
   .bar select:disabled { color: var(--faint); cursor: default; }
-  .status { color: var(--muted); white-space: nowrap; font-size: 0.923rem; margin: 0 4px; }
-  .state { color: var(--faint); margin-left: 2px; }
+  .status { color: color-mix(in srgb, var(--fg) 80%, transparent); white-space: nowrap; font-size: 0.923rem; margin: 0 4px; }
+  .state { color: var(--muted); margin-left: 2px; }
   .state.dead { color: var(--error); }
   .check { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.923rem; white-space: nowrap; }
+  .check input { accent-color: var(--accent); }
   .error { color: var(--error); max-width: 220px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.923rem; }
 </style>

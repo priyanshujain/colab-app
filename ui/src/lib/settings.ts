@@ -1,4 +1,4 @@
-import { themes } from './themes'
+import { themes, type Theme } from './themes'
 
 export const defaults = {
   interfaceFont: 'Inter',
@@ -13,6 +13,15 @@ export const defaults = {
   lineNumbers: false,
   wordWrap: true,
   theme: 'default',
+  lightTheme: 'github-light',
+  appearance: 'dark' as 'dark' | 'light' | 'auto',
+  accent: '',
+  glass: true,
+  opacity: 100,
+  padding: 12,
+  radius: 8,
+  cursorStyle: 'bar' as 'bar' | 'block' | 'underline',
+  cursorBlink: true,
   dblclickMarkdown: false,
   lintDiagnostics: true,
   typeDiagnostics: true,
@@ -33,6 +42,9 @@ export const defaults = {
 
 export type Settings = typeof defaults
 
+const choices = { appearance: ['dark', 'light', 'auto'], cursorStyle: ['bar', 'block', 'underline'] }
+const ranges = { opacity: [60, 100], padding: [0, 48], radius: [0, 16] }
+
 export function parseSettings(raw: string | null): Settings {
   let saved: Record<string, unknown> = {}
   try {
@@ -42,14 +54,28 @@ export function parseSettings(raw: string | null): Settings {
   const s = { ...defaults } as Record<string, unknown>
   for (const k of Object.keys(defaults)) if (typeof saved[k] === typeof s[k] && k !== 'keys') s[k] = saved[k]
   const keys = (saved.keys ?? {}) as Record<string, unknown>
+  for (const [k, list] of Object.entries(choices)) if (!list.includes(s[k] as string)) s[k] = defaults[k as keyof typeof choices]
+  for (const [k, [lo, hi]] of Object.entries(ranges)) s[k] = Math.min(hi, Math.max(lo, s[k] as number))
+  if (!/^#[0-9a-f]{6}$/i.test(s.accent as string)) s.accent = ''
   s.keys = Object.fromEntries(Object.entries(defaults.keys).map(([k, v]) => [k, typeof keys[k] === 'string' ? keys[k] : v]))
   return s as Settings
 }
 
 const sans = (font: string) => `${JSON.stringify(font.trim() || 'Inter')}, 'Inter Variable', -apple-system, BlinkMacSystemFont, sans-serif`
 
-export const cssVars = (s: Settings) => ({
-  ...(themes[s.theme] ?? themes.default).vars,
+export const activeTheme = (s: Settings, systemDark: boolean): Theme =>
+  (s.appearance === 'auto' ? systemDark : s.appearance === 'dark') ? (themes[s.theme] ?? themes.default) : (themes[s.lightTheme] ?? themes['github-light'] ?? themes.default)
+
+function accentVars(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  const bright = (l + 0.05) / 0.05 > 1.05 / (l + 0.05)
+  return { '--accent': hex, '--accent-soft': `${hex}26`, '--accent-line': `${hex}99`, '--link': hex, '--button-bg': hex, '--button-hover': `color-mix(in srgb, ${hex} 85%, ${bright ? 'white' : 'black'})`, '--button-fg': bright ? '#000000' : '#ffffff' }
+}
+
+export const cssVars = (s: Settings, systemDark = true) => ({
+  ...activeTheme(s, systemDark).vars,
+  ...(s.accent ? accentVars(s.accent) : {}),
   '--mono': `${JSON.stringify(s.codeFont.trim() || defaults.codeFont)}, 'JetBrains Mono', 'SF Mono', Menlo, monospace`,
   '--code-size': `${s.codeSize}px`,
   '--code-line-height': String(s.lineHeight),
@@ -58,6 +84,9 @@ export const cssVars = (s: Settings) => ({
   '--ui-size': `${s.interfaceSize}px`,
   '--md-font': sans(s.markdownFont),
   '--md-size': `${s.markdownSize}px`,
+  '--radius': `${s.radius}px`,
+  '--pad': `${s.padding}px`,
+  '--opacity': String(s.opacity),
 })
 
 export type Action = keyof Settings['keys']

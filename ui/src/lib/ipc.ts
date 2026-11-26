@@ -99,6 +99,7 @@ export interface Api {
   runtimeStarted(path: string): Promise<string | null>
   diagnostics(path: string): Promise<Diagnostics[]>
   onMenu(cb: (id: string) => void): Promise<Unlisten>
+  openSettings(section?: string): Promise<void>
 }
 
 const filters = [{ name: 'Notebook', extensions: ['ipynb'] }]
@@ -181,6 +182,7 @@ async function tauriApi(): Promise<Api> {
     runtimeStarted: (path) => invoke('call', { method: 'runtime_started', params: { path } }),
     diagnostics: (path) => invoke('call', { method: 'diagnostics', params: { path } }),
     onMenu: on('menu'),
+    openSettings: (section) => invoke('open_settings', { section: section ?? null }),
   }
 }
 

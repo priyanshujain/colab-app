@@ -281,5 +281,6 @@ export function mockApi(): Api {
     runtimeStarted: async () => assigned,
     diagnostics: async () => [],
     onMenu: async () => () => {},
+    openSettings: async (section) => void window.open(`?view=settings${section ? `&section=${section}` : ''}`, 'settings'),
   }
 }

@@ -61,7 +61,7 @@ define_class!(
 
         #[unsafe(method(openSettings:))]
         fn open_settings(&self, _sender: &AnyObject) {
-            open("settings");
+            open("");
         }
 
         #[unsafe(method(quit:))]

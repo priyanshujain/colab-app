@@ -12,8 +12,8 @@
   import { pythonHighlight } from './highlight'
   import { editorTheme } from './theme'
   import { diagnostics as toDiagnostics, flashField, flashLine, lspExtensions, type Lsp } from './lsp'
-  import { settings } from './state.svelte'
-  import { pressed } from './settings'
+  import { settings, system } from './state.svelte'
+  import { activeTheme, pressed } from './settings'
 
   let { source, language, focused = false, readonly = false, lsp, diagnostics = [], marks = [], match = null, reveal = null, onchange, onfocus, onkey }: {
     source: string
@@ -39,6 +39,8 @@
     EditorState.tabSize.of(settings.tabSize),
     readonly || settings.lineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : [],
     settings.wordWrap ? EditorView.lineWrapping : [],
+    editorTheme(!activeTheme(settings, system.dark).light),
+    drawSelection({ cursorBlinkRate: settings.cursorBlink ? 1200 : 0 }),
   ]
 
   onMount(() => {
@@ -50,8 +52,6 @@
       extensions: [
         Prec.highest([keymap.of(keys), run]),
         readonly ? EditorState.readOnly.of(true) : [history(), closeBrackets(), indentOnInput()],
-        editorTheme,
-        drawSelection(),
         highlightActiveLine(),
         bracketMatching(),
         highlightSelectionMatches(),
