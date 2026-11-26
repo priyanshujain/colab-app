@@ -2,7 +2,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: [site/**]
+    paths: [docs/**, skills/**]
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,8 +19,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - run: curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$RUNNER_TEMP"
+      - run: '"$RUNNER_TEMP/mdbook" build docs'
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: docs/book
       - id: deployment
         uses: actions/deploy-pages@v4

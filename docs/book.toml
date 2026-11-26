@@ -1,0 +1,14 @@
+[book]
+title = "Colab Notebook"
+authors = ["Priyanshu Jain"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/priyanshujain/colab-app"
+edit-url-template = "https://github.com/priyanshujain/colab-app/edit/main/docs/src/{path}"
+site-url = "/colab-app/"
+additional-css = ["calm.css"]
+no-section-label = true

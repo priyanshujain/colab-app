@@ -1,0 +1,22 @@
+:root { --content-max-width: 720px; --sidebar-target-width: 260px; }
+html { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+code, pre, kbd { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.content main { font-size: 1.55rem; line-height: 1.6; }
+.content h1 { letter-spacing: -0.02em; }
+.content h2, .content h3 { letter-spacing: -0.01em; margin-top: 2.2em; }
+.chapter li.part-title { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; margin-top: 1.4em; }
+.light { --bg: #f8f8f7; --fg: #1d1f1c; --sidebar-bg: #f0f0ee; --sidebar-fg: #3a3d38; --sidebar-active: #0a6ad6; --links: #0a6ad6; --quote-bg: #ececea; --quote-border: #d8d8d5; --table-alternate-bg: #f0f0ee; --table-header-bg: #ececea; --code-bg: #ececea; }
+.navy { --bg: #121411; --fg: #e6e6e3; --sidebar-bg: #171916; --sidebar-fg: #b9bcb5; --sidebar-active: #4aa3ff; --links: #4aa3ff; --quote-bg: #1d201b; --quote-border: #2e322b; --table-alternate-bg: #171916; --table-header-bg: #1d201b; --theme-popup-bg: #171916; --searchbar-bg: #1d201b; }
+svg.diagram { display: block; width: 100%; height: auto; font-family: inherit; }
+svg.diagram text { fill: var(--fg); font-size: 13px; }
+svg.diagram text.small { fill: var(--fg); opacity: 0.7; font-size: 11px; }
+svg.diagram text.title { font-weight: 650; }
+svg.diagram .box { fill: var(--bg); stroke: var(--fg); stroke-opacity: 0.45; stroke-width: 1.2; }
+svg.diagram .hot { fill: var(--quote-bg); stroke: var(--links); stroke-width: 1.4; }
+svg.diagram .zone { fill: none; stroke: var(--fg); stroke-opacity: 0.25; stroke-width: 1.4; stroke-dasharray: 5 4; }
+svg.diagram .wire { fill: none; stroke: var(--fg); stroke-opacity: 0.6; stroke-width: 1.4; }
+svg.diagram .wire.dash { stroke-dasharray: 5 4; }
+svg.diagram .head { fill: var(--fg); fill-opacity: 0.6; }
+.diagram-frame { overflow-x: auto; border: 1px solid var(--quote-border); border-radius: 10px; padding: 12px; margin: 1.5em 0 0.5em; }
+.diagram-frame svg { min-width: 560px; }
+pre > code.language-text { white-space: pre-wrap; }

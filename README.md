@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/priyanshujain/colab-app/releases/latest">Download</a>
   ·
-  <a href="https://priyanshujain.github.io/colab-app/">Website</a>
+  <a href="https://priyanshujain.github.io/colab-app/">Docs</a>
 </p>
 
 <p align="center">

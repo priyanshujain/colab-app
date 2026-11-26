@@ -1,4 +1,5 @@
-docs/
+/docs/*.md
+/docs/book/
 poc/
 target/
 node_modules/

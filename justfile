@@ -11,6 +11,9 @@ dev:
     npm --prefix ui install
     cd src-tauri && ../ui/node_modules/.bin/tauri dev
 
+docs:
+    mdbook serve docs
+
 test:
     cargo test --workspace
     npm --prefix ui run check
