@@ -297,13 +297,27 @@ impl Core {
         let notebook = open.doc.notebook();
         let (core, o) = (self.clone(), open.clone());
         tokio::spawn(async move { core.start_project(o).await.map_err(|e| log::error!("tooling: {e:#}")) });
-        if store::get::<store::Saved>(&store::default_path(), &canonical).ok().flatten().is_some() {
-            let (core, o) = (self.clone(), open.clone());
-            tokio::spawn(async move { core.reattach(o).await.map_err(|e| log::error!("reattach: {e:#}")) });
-        }
-        if let Ok(Some(saved)) = store::get::<RemoteKernel>(&self.remote_store(), &canonical) {
-            let (core, o) = (self.clone(), open.clone());
-            tokio::spawn(async move { core.reattach_remote(o, saved).await.map_err(|e| log::error!("reattach remote: {e:#}")) });
+        let colab = store::get::<store::Saved>(&store::default_path(), &canonical).ok().flatten().is_some();
+        let remote = store::get::<RemoteKernel>(&self.remote_store(), &canonical).ok().flatten();
+        if colab || remote.is_some() {
+            let (core, o, (locked, ready)) = (self.clone(), open.clone(), tokio::sync::oneshot::channel());
+            tokio::spawn(async move {
+                let _run = o.run.lock().await;
+                let _ = locked.send(());
+                if colab && let Err(e) = core.clone().reattach(o.clone()).await {
+                    log::error!("reattach: {e:#}");
+                }
+                if let Some(saved) = remote {
+                    let host = saved.host.clone();
+                    if let Err(e) = core.reattach_remote(o.clone(), saved).await {
+                        log::error!("reattach remote: {e:#}");
+                        if !colab::client::not_found(&e) {
+                            o.choice.lock().unwrap().get_or_insert(KernelChoice::Remote { host });
+                        }
+                    }
+                }
+            });
+            let _ = ready.await;
         }
         Ok(OpenedNotebook { path: key, notebook })
     }
@@ -744,12 +758,14 @@ impl Core {
     }
 
     async fn ensure_kernel(self: &Arc<Self>, open: &Arc<Open>) -> Result<()> {
-        let local = matches!(*open.choice.lock().unwrap(), None | Some(KernelChoice::Local));
-        if !local || open.kernel.read().await.is_some() {
+        if open.kernel.read().await.is_some() {
             return Ok(());
         }
-        *open.choice.lock().unwrap() = Some(KernelChoice::Local);
-        self.start_kernel(open, KernelChoice::Local).await
+        let choice = open.choice.lock().unwrap().get_or_insert(KernelChoice::Local).clone();
+        match choice {
+            KernelChoice::Colab { .. } => Ok(()),
+            choice => self.start_kernel(open, choice).await,
+        }
     }
 
     async fn start_kernel(self: &Arc<Self>, open: &Arc<Open>, choice: KernelChoice) -> Result<()> {

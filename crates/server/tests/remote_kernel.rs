@@ -207,6 +207,7 @@ async fn notebook_on_a_runs_on_b_through_the_tailscale_proxy_keeps_its_kernel_ac
     assert_eq!(hosted(b).await.len(), 2);
 
     a.agent_close(&path).await.unwrap();
+    events.lock().unwrap().clear();
     let path = a.open_notebook(&file).await.unwrap().path;
     wait_for(&events, "reattached", |v| v["path"] == path.as_str() && v["status"] == "idle" && v["choice"]["host"] == "b").await;
     assert_eq!(text(&a.agent_run(&path, "after").await.unwrap()), "42");
