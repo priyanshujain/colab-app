@@ -5,7 +5,7 @@ const tauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 export async function sendComm(message: CommMessage) {
   if (!tauri) return
   const { invoke } = await import('@tauri-apps/api/core')
-  await invoke('send_comm', { message })
+  await invoke('call', { method: 'send_comm', params: { message } })
 }
 
 export async function onComm(handler: (message: CommMessage) => void): Promise<() => void> {

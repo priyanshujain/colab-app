@@ -1,5 +1,5 @@
-use colab_app_lib::engine::{Core, Emit};
-use colab_app_lib::ipc::{KernelChoice, Variant};
+use colab_server::engine::{Core, Emit};
+use colab_server::ipc::{KernelChoice, Variant};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -174,7 +174,7 @@ async fn colab_runtime_reads_app_secrets_through_its_own_userdata_and_env() {
     app.run_cell(&p, "c").await.unwrap();
     let cell = app.notebook(&p).unwrap().cells[0].clone();
     app.release(&p).await.unwrap();
-    keyring::Entry::new(&service, "secrets").unwrap().delete_credential().unwrap();
+    colab::keystore::Entry::new(&service, "secrets", "secrets.json").delete().unwrap();
     let text: String = cell.outputs.unwrap().iter().map(|o| serde_json::to_value(o).unwrap()).map(|o| o["text"].as_str().map(String::from).unwrap_or_else(|| o.to_string())).collect();
     assert_eq!(text, "hf_abc123 hf_abc123 s3://team\nSecret NOPE does not exist.\n");
 }

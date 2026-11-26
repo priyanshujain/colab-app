@@ -1,0 +1,27 @@
+{
+  "Node": {
+    "ID": 1000000000000003,
+    "StableID": "nNode2CNTRL",
+    "Name": "anton.example.ts.net.",
+    "User": 1000000000000002,
+    "Addresses": [
+      "100.68.126.75/32",
+      "fd7a:115c:a1e0::43a:7e4b/128"
+    ],
+    "AllowedIPs": [
+      "100.68.126.75/32",
+      "fd7a:115c:a1e0::43a:7e4b/128"
+    ],
+    "HomeDERP": 6,
+    "Created": "2026-02-27T13:47:22.680981777Z",
+    "Cap": 148,
+    "Online": true,
+    "ComputedName": "anton",
+    "ComputedNameWithHost": "anton"
+  },
+  "UserProfile": {
+    "ID": 1000000000000002,
+    "LoginName": "friend@example.com",
+    "DisplayName": "Example User"
+  }
+}

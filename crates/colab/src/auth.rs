@@ -2,6 +2,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Digest;
+use crate::keystore;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
@@ -45,6 +47,43 @@ pub enum AuthError {
     SignedOut(String),
 }
 
+pub struct PendingSignIn {
+    pub url: String,
+    client: OAuthClient,
+    verifier: String,
+}
+
+impl PendingSignIn {
+    pub async fn complete_sign_in(self, code: &str, redirect_uri: &str) -> Result<Auth> {
+        let auth = Auth::new(Tokens { client: self.client.clone(), refresh_token: String::new(), access_token: String::new(), expiry: None }, true);
+        let body = auth.token_request(&[("code", code), ("redirect_uri", redirect_uri), ("grant_type", "authorization_code"), ("code_verifier", &self.verifier)], &self.client).await?;
+        let mut tokens = auth.tokens.lock().await;
+        tokens.refresh_token = body["refresh_token"].as_str().context("no refresh_token")?.into();
+        apply(&mut tokens, &body);
+        save(&tokens)?;
+        drop(tokens);
+        Ok(auth)
+    }
+}
+
+pub struct Loopback {
+    listener: tokio::net::TcpListener,
+    pub redirect_uri: String,
+}
+
+impl Loopback {
+    pub async fn bind() -> Result<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let redirect_uri = format!("http://127.0.0.1:{}/", listener.local_addr()?.port());
+        Ok(Self { listener, redirect_uri })
+    }
+
+    pub async fn code(&self, auth_url: &str) -> Result<String> {
+        let state = url::Url::parse(auth_url)?.query_pairs().find(|(k, _)| k == "state").context("auth url has no state")?.1.into_owned();
+        receive_code(&self.listener, &state).await
+    }
+}
+
 pub struct Auth {
     tokens: Mutex<Tokens>,
     http: reqwest::Client,
@@ -57,7 +96,7 @@ impl Auth {
     }
 
     pub fn load(import_cli: bool) -> Result<Option<Self>> {
-        if let Ok(json) = keychain().get_password() {
+        if let Some(json) = keychain().get()? {
             return Ok(Some(Self::new(serde_json::from_str(&json)?, true)));
         }
         if !import_cli {
@@ -68,31 +107,20 @@ impl Auth {
         Ok(Some(Self::new(tokens, true)))
     }
 
-    pub async fn sign_in(client: OAuthClient) -> Result<Self> {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let redirect = format!("http://127.0.0.1:{}/", listener.local_addr()?.port());
+    pub fn begin_sign_in(client: OAuthClient, redirect_uri: &str) -> Result<PendingSignIn> {
         let state = uuid::Uuid::new_v4().to_string();
+        let verifier = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let challenge = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, sha2::Sha256::digest(&verifier));
         let url = url::Url::parse_with_params("https://accounts.google.com/o/oauth2/v2/auth", [
-            ("client_id", client.client_id.as_str()), ("redirect_uri", &redirect), ("response_type", "code"),
+            ("client_id", client.client_id.as_str()), ("redirect_uri", redirect_uri), ("response_type", "code"),
             ("scope", SCOPES), ("access_type", "offline"), ("prompt", "consent"), ("state", &state),
-        ])?;
-        std::process::Command::new("open").arg(url.as_str()).status()?;
-        let code = receive_code(&listener, &state).await?;
-        let auth = Self::new(Tokens { client: client.clone(), refresh_token: String::new(), access_token: String::new(), expiry: None }, true);
-        let body = auth.token_request(&[("code", code.as_str()), ("redirect_uri", &redirect), ("grant_type", "authorization_code")], &client).await?;
-        let mut tokens = auth.tokens.lock().await;
-        tokens.refresh_token = body["refresh_token"].as_str().context("no refresh_token")?.into();
-        apply(&mut tokens, &body);
-        save(&tokens)?;
-        drop(tokens);
-        Ok(auth)
+            ("code_challenge", &challenge), ("code_challenge_method", "S256"),
+        ])?.into();
+        Ok(PendingSignIn { url, client, verifier })
     }
 
     pub fn sign_out() -> Result<()> {
-        match keychain().delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        keychain().delete()
     }
 
     pub async fn access_token(&self) -> Result<String> {
@@ -143,17 +171,12 @@ fn apply(tokens: &mut Tokens, body: &Value) {
     tokens.expiry = Some(Utc::now() + Duration::seconds(body["expires_in"].as_i64().unwrap_or(0)));
 }
 
-fn keychain() -> keyring::Entry {
-    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).expect("keychain entry")
+fn keychain() -> keystore::Entry {
+    keystore::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER, "colab-token.json")
 }
 
 fn save(tokens: &Tokens) -> Result<()> {
-    let json = serde_json::to_string(tokens)?;
-    if keychain().set_password(&json).is_err() {
-        keychain().delete_credential()?;
-        keychain().set_password(&json)?;
-    }
-    Ok(())
+    keychain().set(&serde_json::to_string(tokens)?)
 }
 
 pub fn cli_token_path() -> PathBuf {

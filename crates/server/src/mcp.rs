@@ -58,7 +58,10 @@ pub enum Runtime {
 #[derive(Deserialize, JsonSchema)]
 pub struct ConnectArgs {
     pub path: String,
-    pub runtime: Runtime,
+    /// Required unless host is set
+    pub runtime: Option<Runtime>,
+    /// Label of a saved host (see list_hosts) to run on its kernel type, such as MPS for Apple GPU work, instead of Colab or local
+    pub host: Option<String>,
     /// Colab accelerator such as T4, A100 or V6E1; omit for the default of the runtime type
     pub accelerator: Option<String>,
     #[serde(default)]
@@ -94,16 +97,18 @@ impl Server {
         self.core.agent_open(&a.path).await.map_err(fail)
     }
 
-    #[tool(description = "Connect an open notebook to a kernel: a Colab runtime (assigned on your Google account, may take a minute) or the local .venv; no-op when already connected to the same one")]
+    #[tool(description = "Connect an open notebook to a kernel: a Colab runtime (assigned on your Google account, may take a minute), this machine's kernel, or the kernel of a saved host, which runs in the folder of the same name under that host's home, or else in its own working folder on the host; files are not synced; reuses the host kernel the notebook detached from; fails at once when the host is unavailable; no-op when already connected to the same one")]
     async fn connect_kernel(&self, Parameters(a): Parameters<ConnectArgs>) -> Reply {
-        let variant = match a.runtime {
-            Runtime::Local => None,
-            Runtime::ColabCpu => Some(Variant::Default),
-            Runtime::ColabGpu => Some(Variant::Gpu),
-            Runtime::ColabTpu => Some(Variant::Tpu),
+        let variant = match (&a.host, a.runtime) {
+            (Some(_), _) => None,
+            (None, None) => return Err("pass runtime or host".into()),
+            (None, Some(Runtime::Local)) => None,
+            (None, Some(Runtime::ColabCpu)) => Some(Variant::Default),
+            (None, Some(Runtime::ColabGpu)) => Some(Variant::Gpu),
+            (None, Some(Runtime::ColabTpu)) => Some(Variant::Tpu),
         };
         let choice = match variant {
-            None => KernelChoice::Local,
+            None => a.host.map_or(KernelChoice::Local, |host| KernelChoice::Remote { host }),
             Some(Variant::Default) => KernelChoice::Colab { variant: Variant::Default, accelerator: None, high_ram: a.high_ram },
             Some(variant) => {
                 let accelerator = match a.accelerator {
@@ -122,24 +127,47 @@ impl Server {
         Ok(format!("{} ({})", if changed { "connected" } else { "already connected" }, serde_json::to_string(&state.status).unwrap_or_default().trim_matches('"')))
     }
 
-    #[tool(description = "Release the notebook's Colab runtime so it stops using quota, or shut down its local kernel; variables are lost")]
+    #[tool(description = "Release the notebook's Colab runtime so it stops using quota, or shut down its local or host kernel; variables are lost")]
     async fn release_kernel(&self, Parameters(a): Parameters<NotebookArgs>) -> Reply {
         self.core.release(&a.path).await.map_err(fail)?;
         self.core.detach(&a.path).await.map_err(fail)?;
         Ok("released".into())
     }
 
-    #[tool(description = "Close a notebook and its app window once work is done; keeps a Colab runtime assigned unless release_kernel ran first")]
+    #[tool(description = "Close a notebook and its app window once work is done; keeps a Colab runtime or host kernel running unless release_kernel ran first")]
     async fn close_notebook(&self, Parameters(a): Parameters<NotebookArgs>) -> Reply {
         self.core.agent_close(&a.path).await.map_err(fail)?;
         Ok("closed".into())
     }
 
-    #[tool(description = "Kernel status and runtime of an open notebook")]
+    #[tool(description = "Kernel status, kernel type and host of an open notebook")]
     async fn kernel_status(&self, Parameters(a): Parameters<NotebookArgs>) -> Reply {
         let state = self.core.kernel_state(&a.path).await.map_err(fail)?;
         let live = !matches!(state.status, kernel::KernelStatus::Dead | kernel::KernelStatus::Disconnected);
-        Ok(serde_json::json!({"status": state.status, "kernel": state.choice.filter(|_| live)}).to_string())
+        let kernel = state.choice.filter(|_| live);
+        let (host, kernels) = match &kernel {
+            Some(KernelChoice::Remote { host }) => (Some(host.clone()), self.core.host_state(host).await.map(|s| s.kernels).unwrap_or_default()),
+            Some(KernelChoice::Local) => {
+                let machine = self.core.machine();
+                (Some(machine.name), machine.kernels)
+            }
+            Some(KernelChoice::Colab { .. }) => (Some("Colab".into()), vec![]),
+            None => (None, vec![]),
+        };
+        let mut kernel = serde_json::json!(kernel);
+        if let Some(k) = kernels.into_iter().next() {
+            kernel["type"] = k.id.into();
+        }
+        Ok(serde_json::json!({"status": state.status, "kernel": kernel, "host": host}).to_string())
+    }
+
+    #[tool(description = "List the saved hosts whose kernels connect_kernel can use, with each host's kernel type (MPS for Apple GPU, CUDA for NVIDIA GPU, or CPU) and whether it is available now")]
+    async fn list_hosts(&self) -> Reply {
+        let hosts = self.core.host_status().await.map_err(fail)?;
+        Ok(hosts.iter().map(|h| {
+            let kernels = h.kernels.iter().map(|k| format!("{} {}", k.id, k.label)).collect::<Vec<_>>().join(", ");
+            format!("{}\t{}\t{kernels}\t{}", h.label, h.address, if h.available { "available" } else { "unavailable" })
+        }).collect::<Vec<_>>().join("\n"))
     }
 
     #[tool(description = "Read every cell of an open notebook with ids, sources and text outputs")]
@@ -240,10 +268,14 @@ fn sessions() -> LocalSessionManager {
     manager
 }
 
-pub async fn serve(core: Arc<Core>, port: u16) -> anyhow::Result<()> {
+pub fn router(core: Arc<Core>) -> axum::Router {
     let config = StreamableHttpServerConfig::default().enforce_origin_validation();
     let service: StreamableHttpService<Server, LocalSessionManager> = StreamableHttpService::new(move || Ok(Server::new(core.clone())), Arc::new(sessions()), config);
+    axum::Router::new().nest_service("/mcp", service)
+}
+
+pub async fn serve(core: Arc<Core>, port: u16) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    axum::serve(listener, axum::Router::new().nest_service("/mcp", service)).await?;
+    axum::serve(listener, router(core)).await?;
     Ok(())
 }

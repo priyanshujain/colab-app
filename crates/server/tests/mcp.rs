@@ -1,4 +1,4 @@
-use colab_app_lib::engine::{Core, Emit};
+use colab_server::engine::{Core, Emit};
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, ClientConfig};
 use rmcp::transport::{StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig};
@@ -21,7 +21,7 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     let core = Core::with_secrets(emit, dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
 
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    tokio::spawn(colab_app_lib::mcp::serve(core.clone(), port));
+    tokio::spawn(colab_server::mcp::serve(core.clone(), port));
     let url = format!("http://127.0.0.1:{port}/mcp");
     let deadline = Instant::now() + Duration::from_secs(5);
     while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
@@ -43,7 +43,7 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     assert_eq!(call("connect_kernel", json!({"path": p, "runtime": "local"})).await, ("connected (idle)".into(), false));
     assert_eq!(call("connect_kernel", json!({"path": p, "runtime": "local"})).await, ("already connected (idle)".into(), false));
     let (status, _) = call("kernel_status", json!({"path": p})).await;
-    assert_eq!(serde_json::from_str::<Value>(&status).unwrap(), json!({"status": "idle", "kernel": {"kind": "local"}}));
+    assert_eq!(serde_json::from_str::<Value>(&status).unwrap(), json!({"status": "idle", "kernel": {"kind": "local", "type": core.machine().kernels[0].id}, "host": core.machine().name}));
     let (id, err) = call("insert_cell", json!({"path": p, "index": 99, "source": "data.sort()\nprint('sorted', data)\ndata[-1] * 10"})).await;
     assert!(!err && !id.is_empty());
     let focus = events.lock().unwrap().iter().any(|(n, v)| n == "agent-focus" && v["cell_id"] == id.as_str() && v["path"] == p.as_str());
@@ -94,7 +94,7 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
     assert_eq!(browser.status(), 403);
     assert_eq!(call("release_kernel", json!({"path": p})).await, ("released".into(), false));
     let (status, _) = call("kernel_status", json!({"path": p})).await;
-    assert_eq!(serde_json::from_str::<Value>(&status).unwrap(), json!({"status": "disconnected", "kernel": null}));
+    assert_eq!(serde_json::from_str::<Value>(&status).unwrap(), json!({"status": "disconnected", "kernel": null, "host": null}));
     let (out, _) = call("run_cell", json!({"path": p, "cell_id": "setup"})).await;
     assert_eq!(out, "");
     assert_eq!(call("release_kernel", json!({"path": p})).await, ("released".into(), false));
@@ -108,42 +108,43 @@ async fn claude_drives_an_open_notebook_over_mcp_and_the_app_follows() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn claude_code_reaches_the_app_through_the_stdio_bridge_across_app_restarts() {
+async fn the_stdio_bridge_starts_the_server_when_it_is_down_and_reconnects_after_it_dies() {
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{port}/mcp");
-    let connect = async || {
+    let server = Arc::new(Mutex::new(None::<tokio::task::JoinHandle<anyhow::Result<()>>>));
+    let starts = Arc::new(Mutex::new(0));
+    let data = tempfile::tempdir().unwrap();
+    let (running, count, dir) = (server.clone(), starts.clone(), data.path().to_path_buf());
+    let start = move || {
+        *count.lock().unwrap() += 1;
+        let core = Core::with_secrets(Arc::new(|_, _| {}), dir.clone(), "colab-app-tests");
+        *running.lock().unwrap() = Some(tokio::spawn(colab_server::mcp::serve(core, port)));
+        Ok(())
+    };
+    let connect = async |start: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>| {
         let (client_side, bridge_side) = tokio::io::duplex(1 << 16);
         let (bridge_in, bridge_out) = tokio::io::split(bridge_side);
         let url = url.clone();
-        tokio::spawn(async move { colab_app_lib::bridge::bridge(&url, bridge_in, bridge_out).await });
+        tokio::spawn(async move { colab_server::bridge::bridge(&url, start, bridge_in, bridge_out).await });
         ClientConfig::default().serve(tokio::io::split(client_side)).await
     };
-    let start = async || {
-        let core = Core::with_secrets(Arc::new(|_, _| {}), dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
-        let server = tokio::spawn(colab_app_lib::mcp::serve(core, port));
-        while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        server
-    };
 
-    let closed = connect().await.err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(closed.contains(colab_app_lib::bridge::NOT_RUNNING), "{closed}");
+    let refused = connect(Box::new(|| Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no colab-server binary")))).await.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(refused.contains(colab_server::bridge::NOT_RUNNING) && refused.contains("no colab-server binary"), "{refused}");
 
-    let app = start().await;
-    let client = connect().await.unwrap();
+    let client = connect(Box::new(start)).await.unwrap();
+    assert_eq!(*starts.lock().unwrap(), 1);
     let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
     assert!(["open_notebook", "run_cell", "release_kernel"].iter().all(|t| tools.iter().any(|n| n == t)), "{tools:?}");
     let list = CallToolRequestParams::new("list_notebooks");
     assert_eq!(client.call_tool(list.clone()).await.unwrap().is_error, Some(false));
+    assert_eq!(*starts.lock().unwrap(), 1, "the bridge started a second server while the first was up");
 
-    app.abort();
-    let _ = app.await;
-    let down = client.call_tool(list.clone()).await.unwrap_err().to_string();
-    assert!(down.contains(colab_app_lib::bridge::NOT_RUNNING), "{down}");
-
-    let _app = start().await;
-    assert_eq!(client.call_tool(list).await.unwrap().is_error, Some(false), "bridge did not reconnect after the app restarted");
+    let dead = server.lock().unwrap().take().unwrap();
+    dead.abort();
+    let _ = dead.await;
+    assert_eq!(client.call_tool(list).await.unwrap().is_error, Some(false), "the bridge did not start the server again after it died");
+    assert_eq!(*starts.lock().unwrap(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -155,7 +156,7 @@ async fn run_cell_longer_than_five_quiet_minutes_still_returns_its_output() {
     std::fs::write(&path, json!({"nbformat": 4, "nbformat_minor": 5, "metadata": {"kernelspec": {"name": "python3"}}, "cells": [cell]}).to_string()).unwrap();
     let core = Core::with_secrets(Arc::new(|_: &str, _: Value| {}), dirs::data_dir().unwrap().join("dev.colab-app"), "colab-app-tests");
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    tokio::spawn(colab_app_lib::mcp::serve(core, port));
+    tokio::spawn(colab_server::mcp::serve(core, port));
     while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }

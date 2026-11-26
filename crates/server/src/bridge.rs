@@ -3,13 +3,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
-pub const NOT_RUNNING: &str = "Colab Notebook is not running. Open the app, then retry.";
+pub const NOT_RUNNING: &str = "The Colab Notebook server is not running and did not start. Check server.log in the app data folder, or run `colab-server run`, then retry.";
 
 struct Upstream {
     client: reqwest::Client,
     url: String,
     session: Mutex<Option<String>>,
     initialize: Mutex<Option<String>>,
+    start: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+    starting: Mutex<()>,
 }
 
 enum Failure {
@@ -68,6 +70,28 @@ impl Upstream {
             result => result.map(|r| r.0),
         }
     }
+
+    async fn send(&self, line: &str, initializing: bool) -> Result<Vec<String>, Failure> {
+        let attempt = async || if initializing { self.initialize(line).await } else { self.forward(line).await };
+        let result = attempt().await;
+        if !matches!(result, Err(Failure::Down)) {
+            return result;
+        }
+        let _starting = self.starting.lock().await;
+        let result = attempt().await;
+        if !matches!(result, Err(Failure::Down)) {
+            return result;
+        }
+        (self.start)().map_err(|e| Failure::Other(format!("{NOT_RUNNING} Starting it failed: {e}")))?;
+        for _ in 0..150 {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let result = attempt().await;
+            if !matches!(result, Err(Failure::Down)) {
+                return result;
+            }
+        }
+        Err(Failure::Down)
+    }
 }
 
 fn events(text: &str) -> Vec<String> {
@@ -77,9 +101,9 @@ fn events(text: &str) -> Vec<String> {
     }).collect()
 }
 
-pub async fn bridge(url: &str, input: impl AsyncRead + Unpin, output: impl AsyncWrite + Unpin + Send + 'static) -> anyhow::Result<()> {
+pub async fn bridge(url: &str, start: impl Fn() -> std::io::Result<()> + Send + Sync + 'static, input: impl AsyncRead + Unpin, output: impl AsyncWrite + Unpin + Send + 'static) -> anyhow::Result<()> {
     let client = reqwest::Client::builder().pool_max_idle_per_host(0).build()?;
-    let upstream = Arc::new(Upstream { client, url: url.into(), session: Mutex::new(None), initialize: Mutex::new(None) });
+    let upstream = Arc::new(Upstream { client, url: url.into(), session: Mutex::new(None), initialize: Mutex::new(None), start: Box::new(start), starting: Mutex::new(()) });
     let output = Arc::new(Mutex::new(output));
     let mut lines = BufReader::new(input).lines();
     let mut tasks = tokio::task::JoinSet::new();
@@ -91,7 +115,7 @@ pub async fn bridge(url: &str, input: impl AsyncRead + Unpin, output: impl Async
         }
         let (upstream, output) = (upstream.clone(), output.clone());
         let task = async move {
-            let result = if initializing { upstream.initialize(&line).await } else { upstream.forward(&line).await };
+            let result = upstream.send(&line, initializing).await;
             let replies = match (result, message.get("id")) {
                 (Ok(replies), _) => replies,
                 (Err(_), None) => vec![],
@@ -112,10 +136,10 @@ pub async fn bridge(url: &str, input: impl AsyncRead + Unpin, output: impl Async
     Ok(())
 }
 
-pub fn run() {
+pub fn run(server: &'static [&'static str]) {
     let url = format!("http://127.0.0.1:{}/mcp", crate::mcp::PORT);
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    if let Err(e) = runtime.block_on(bridge(&url, tokio::io::stdin(), tokio::io::stdout())) {
+    if let Err(e) = runtime.block_on(bridge(&url, move || crate::spawn(server), tokio::io::stdin(), tokio::io::stdout())) {
         eprintln!("colab mcp bridge: {e:#}");
         std::process::exit(1);
     }

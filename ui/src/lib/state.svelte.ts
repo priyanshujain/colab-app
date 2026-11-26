@@ -3,6 +3,7 @@ import { cssVars, parseSettings } from './settings'
 
 export const settings = $state(parseSettings(localStorage.getItem('settings')))
 export const alerts = $state({ error: '' })
+export const remote = $state<{ host: string | null }>({ host: null })
 export const account = $state<{ auth: AuthState }>({ auth: { state: 'signed_out' } })
 
 $effect.root(() => {

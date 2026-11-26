@@ -10,18 +10,37 @@ import type { Diagnostics } from '../bindings/Diagnostics'
 import type { InputRequest } from '../bindings/InputRequest'
 import type { KernelChoice } from '../bindings/KernelChoice'
 import type { KernelStatusEvent } from '../bindings/KernelStatusEvent'
+import type { Machine } from '../bindings/Machine'
 import type { NotebookChanged } from '../bindings/NotebookChanged'
 import type { OpenedNotebook } from '../bindings/OpenedNotebook'
 import type { Runtime } from '../bindings/Runtime'
 import { mockApi } from './mock'
 
 type Unlisten = () => void
+export type Host = { label: string; address: string }
+export type { TailscaleStatus } from '../bindings/TailscaleStatus'
+import type { TailscaleStatus } from '../bindings/TailscaleStatus'
+export type { HostStatus } from '../bindings/HostStatus'
+import type { HostStatus } from '../bindings/HostStatus'
+export type Listing = { path: string; entries: { name: string; dir: boolean }[] }
 export type { SaveState } from "../bindings/SaveState"
 import type { SaveState } from "../bindings/SaveState"
 
 export interface Api {
   openNotebook(path: string): Promise<OpenedNotebook | null>
   windowStartup(): Promise<string | null>
+  windowHost(): Promise<string | null>
+  listDir(path: string): Promise<Listing>
+  listHosts(): Promise<Host[]>
+  addHost(label: string, address: string): Promise<Host[]>
+  removeHost(label: string): Promise<Host[]>
+  onServerOutdated(cb: (notice: string | null) => void): Promise<Unlisten>
+  tailscaleStatus(): Promise<TailscaleStatus>
+  tailscaleEnable(hostname?: string): Promise<TailscaleStatus>
+  tailscaleDisable(): Promise<TailscaleStatus>
+  tailscaleLogout(): Promise<TailscaleStatus>
+  onTailscaleStatus(cb: (e: TailscaleStatus) => void): Promise<Unlisten>
+  hostStatus(): Promise<HostStatus[]>
   editCell(path: string, edit: CellEdit): Promise<void>
   runCell(path: string, cellId: string): Promise<void>
   runAll(path: string): Promise<void>
@@ -42,6 +61,12 @@ export interface Api {
   renameSymbol(pos: CellPosition, newName: string): Promise<void>
   openUrl(url: string): Promise<void>
   version(): Promise<string>
+  openAgentNotebooks(): Promise<boolean>
+  setOpenAgentNotebooks(on: boolean): Promise<void>
+  serverStatus(): Promise<string>
+  stopServer(restart: boolean): Promise<void>
+  startServer(): Promise<void>
+  machine(): Promise<Machine>
   completion(pos: CellPosition): Promise<unknown>
   hover(pos: CellPosition): Promise<unknown>
   definition(pos: CellPosition): Promise<unknown>
@@ -80,49 +105,67 @@ const filters = [{ name: 'Notebook', extensions: ['ipynb'] }]
 
 async function tauriApi(): Promise<Api> {
   const { invoke } = await import('@tauri-apps/api/core')
-  const { listen } = await import('@tauri-apps/api/event')
   const dialog = await import('@tauri-apps/plugin-dialog')
-  const on = <T>(name: string) => (cb: (e: T) => void) => listen<T>(name, (e) => cb(e.payload))
+  const current = (await import('@tauri-apps/api/webviewWindow')).getCurrentWebviewWindow()
+  const on = <T>(name: string) => (cb: (e: T) => void) => current.listen<T>(name, (e) => cb(e.payload))
   return {
-    openNotebook: (path) => invoke('open_notebook', { path }),
+    openNotebook: (path) => invoke('call', { method: 'open_notebook', params: { path } }),
     windowStartup: () => invoke('window_startup'),
-    editCell: (path, edit) => invoke('edit_cell', { path, edit }),
-    runCell: (path, cellId) => invoke('run_cell', { path, cellId }),
-    runAll: (path) => invoke('run_all', { path }),
-    interrupt: (path) => invoke('interrupt', { path }),
-    restart: (path) => invoke('restart', { path }),
-    selectKernel: (path, choice) => invoke('select_kernel', { path, choice }),
-    sendComm: (message) => invoke('send_comm', { message }),
+    windowHost: () => invoke('window_host'),
+    listDir: (path) => invoke('call', { method: 'list_dir', params: { path } }),
+    listHosts: () => invoke('list_hosts'),
+    addHost: (label, address) => invoke('add_host', { label, address }),
+    removeHost: (label) => invoke('remove_host', { label }),
+    onServerOutdated: on('server-outdated'),
+    tailscaleStatus: () => invoke('call', { method: 'tailscale_status' }),
+    tailscaleEnable: (hostname) => invoke('call', { method: 'tailscale_enable', params: { hostname } }),
+    tailscaleDisable: () => invoke('call', { method: 'tailscale_disable' }),
+    tailscaleLogout: () => invoke('call', { method: 'tailscale_logout' }),
+    onTailscaleStatus: on('tailscale-status'),
+    hostStatus: () => invoke('call', { method: 'host_status' }),
+    editCell: (path, edit) => invoke('call', { method: 'edit_cell', params: { path, edit } }),
+    runCell: (path, cellId) => invoke('call', { method: 'run_cell', params: { path, cellId } }),
+    runAll: (path) => invoke('call', { method: 'run_all', params: { path } }),
+    interrupt: (path) => invoke('call', { method: 'interrupt', params: { path } }),
+    restart: (path) => invoke('call', { method: 'restart', params: { path } }),
+    selectKernel: (path, choice) => invoke('call', { method: 'select_kernel', params: { path, choice } }),
+    sendComm: (message) => invoke('call', { method: 'send_comm', params: { message } }),
     signIn: (clientId, clientSecret) => invoke('sign_in', { clientId, clientSecret }),
-    signOut: () => invoke('sign_out'),
-    authState: () => invoke('auth_state'),
-    colabInfo: () => invoke('colab_info'),
-    listRuntimes: () => invoke('list_runtimes'),
-    detach: (path) => invoke('detach', { path }),
-    release: (path) => invoke('release', { path }),
-    cloneLink: (url, dest) => invoke('clone_link', { url, dest }),
+    signOut: () => invoke('call', { method: 'sign_out' }),
+    authState: () => invoke('call', { method: 'auth_state' }),
+    colabInfo: () => invoke('call', { method: 'colab_info' }),
+    listRuntimes: () => invoke('call', { method: 'list_runtimes' }),
+    detach: (path) => invoke('call', { method: 'detach', params: { path } }),
+    release: (path) => invoke('call', { method: 'release', params: { path } }),
+    cloneLink: (url, dest) => invoke('call', { method: 'clone_link', params: { url, dest } }),
     checkLink: (url) => invoke('check_link', { url }),
-    prepareRename: (pos) => invoke('prepare_rename', { pos }),
-    renameSymbol: (pos, newName) => invoke('rename_symbol', { pos, newName }),
+    prepareRename: (pos) => invoke('call', { method: 'prepare_rename', params: { pos } }),
+    renameSymbol: (pos, newName) => invoke('call', { method: 'rename_symbol', params: { pos, newName } }),
     openUrl: (url) => invoke('open_url', { url }),
     version: async () => (await import('@tauri-apps/api/app')).getVersion(),
-    completion: (pos) => invoke('completion', { pos }),
-    hover: (pos) => invoke('hover', { pos }),
-    definition: (pos) => invoke('definition', { pos }),
-    formatCell: (path, cellId) => invoke('format_cell', { path, cellId }),
-    formatNotebook: (path) => invoke('format_notebook', { path }),
-    organizeImports: (path, cellId) => invoke('organize_imports', { path, cellId }),
-    codeActions: (pos) => invoke('code_actions', { pos }),
-    applyCodeAction: (path, id) => invoke('apply_code_action', { path, id }),
-    readFile: (path) => invoke('read_file', { path }),
+    openAgentNotebooks: () => invoke('open_agent_notebooks'),
+    setOpenAgentNotebooks: (on) => invoke('set_open_agent_notebooks', { on }),
+    serverStatus: () => invoke('server_status'),
+    stopServer: (restart) => invoke('stop_server', { restart }),
+    startServer: () => invoke('start_server'),
+    machine: () => invoke('call', { method: 'machine' }),
+    completion: (pos) => invoke('call', { method: 'completion', params: { pos } }),
+    hover: (pos) => invoke('call', { method: 'hover', params: { pos } }),
+    definition: (pos) => invoke('call', { method: 'definition', params: { pos } }),
+    formatCell: (path, cellId) => invoke('call', { method: 'format_cell', params: { path, cellId } }),
+    formatNotebook: (path) => invoke('call', { method: 'format_notebook', params: { path } }),
+    organizeImports: (path, cellId) => invoke('call', { method: 'organize_imports', params: { path, cellId } }),
+    codeActions: (pos) => invoke('call', { method: 'code_actions', params: { pos } }),
+    applyCodeAction: (path, id) => invoke('call', { method: 'apply_code_action', params: { path, id } }),
+    readFile: (path) => invoke('call', { method: 'read_file', params: { path } }),
     listMonospaceFonts: once(() => invoke<string[]>('list_monospace_fonts')),
     listFonts: once(() => invoke<string[]>('list_fonts')),
-    renameNotebook: (path, newName) => invoke('rename_notebook', { path, newName }),
-    sendInput: (path, value) => invoke('send_input', { path, value }),
+    renameNotebook: (path, newName) => invoke('call', { method: 'rename_notebook', params: { path, newName } }),
+    sendInput: (path, value) => invoke('call', { method: 'send_input', params: { path, value } }),
     fileMenu: (path) => invoke('file_menu', { path }),
-    listSecrets: () => invoke('list_secrets'),
-    setSecret: (name, value) => invoke('set_secret', { name, value }),
-    deleteSecret: (name) => invoke('delete_secret', { name }),
+    listSecrets: () => invoke('call', { method: 'list_secrets' }),
+    setSecret: (name, value) => invoke('call', { method: 'set_secret', params: { name, value } }),
+    deleteSecret: (name) => invoke('call', { method: 'delete_secret', params: { name } }),
     pickNotebook: async () => (await dialog.open({ filters, multiple: false, directory: false })) as string | null,
     pickSave: (defaultPath) => dialog.save({ defaultPath, filters }),
     onCellOutputs: on('cell-outputs'),
@@ -134,9 +177,9 @@ async function tauriApi(): Promise<Api> {
     onInputRequest: on('input-request'),
     onSaveState: on('save-state'),
     onAgentFocus: on('agent-focus'),
-    kernelState: (path) => invoke('kernel_state', { path }),
-    runtimeStarted: (path) => invoke('runtime_started', { path }),
-    diagnostics: (path) => invoke('diagnostics', { path }),
+    kernelState: (path) => invoke('call', { method: 'kernel_state', params: { path } }),
+    runtimeStarted: (path) => invoke('call', { method: 'runtime_started', params: { path } }),
+    diagnostics: (path) => invoke('call', { method: 'diagnostics', params: { path } }),
     onMenu: on('menu'),
   }
 }

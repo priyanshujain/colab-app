@@ -1,10 +1,11 @@
 use anyhow::{Result, bail};
+use colab::keystore::Entry;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 pub struct Secrets {
-    service: String,
+    entry: Entry,
     lock: Mutex<()>,
 }
 
@@ -17,26 +18,18 @@ pub fn valid_name(name: &str) -> Result<()> {
 
 impl Secrets {
     pub fn new(service: &str) -> Self {
-        Self { service: service.into(), lock: Mutex::new(()) }
-    }
-
-    fn entry(&self) -> Result<keyring::Entry> {
-        Ok(keyring::Entry::new(&self.service, "secrets")?)
+        Self { entry: Entry::new(service, "secrets", "secrets.json"), lock: Mutex::new(()) }
     }
 
     fn values(&self) -> Result<BTreeMap<String, String>> {
-        match self.entry()?.get_password() {
-            Ok(text) => Ok(serde_json::from_str(&text)?),
-            Err(keyring::Error::NoEntry) => Ok(BTreeMap::new()),
-            Err(e) => Err(e.into()),
-        }
+        Ok(self.entry.get()?.map(|t| serde_json::from_str(&t)).transpose()?.unwrap_or_default())
     }
 
     fn update(&self, f: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<()> {
         let _l = self.lock.lock().unwrap();
         let mut values = self.values()?;
         f(&mut values);
-        Ok(self.entry()?.set_password(&serde_json::to_string(&values)?)?)
+        self.entry.set(&serde_json::to_string(&values)?)
     }
 
     pub fn list(&self) -> Result<BTreeMap<String, String>> {

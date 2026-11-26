@@ -3,13 +3,13 @@ use crate::outputs;
 use crate::secrets::Secrets;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use anyhow::{Context, Result, anyhow, bail};
-use colab::{Auth, AuthError, Colab, ColabKernel, OAuthClient, store};
+use colab::{Auth, AuthError, Colab, ColabKernel, JupyterKernel, JupyterServer, OAuthClient, PendingSignIn, RemoteHost, store};
 use futures::StreamExt;
 use chrono::{DateTime, SecondsFormat, Utc};
 use kernel::{Channel, Content, ExecutionState, Kernel, KernelStatus, Message};
 use kernel_local::LocalKernel;
 use nb::{Cell, CellType, NotebookDoc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 enum Active {
     Local(LocalKernel),
     Colab(ColabKernel),
+    Remote(JupyterKernel<RemoteHost>),
 }
 
 impl Active {
@@ -33,8 +34,16 @@ impl Active {
         match self {
             Self::Local(k) => k,
             Self::Colab(k) => k,
+            Self::Remote(k) => k,
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct RemoteKernel {
+    #[serde(alias = "endpoint")]
+    host: String,
+    kernel_id: String,
 }
 
 struct Tasks(Vec<tokio::task::JoinHandle<()>>);
@@ -72,7 +81,11 @@ pub struct Core {
     tooling: OnceCell<Arc<Tooling>>,
     auth: Mutex<Option<Arc<Auth>>>,
     auth_state: StdMutex<Option<String>>,
+    pending: StdMutex<Option<PendingSignIn>>,
     secrets: Arc<Secrets>,
+    pub socks: watch::Sender<Option<colab::Socks>>,
+    pub peers: watch::Sender<Option<crate::tailscale::Netmap>>,
+    host_kernels: StdMutex<HashMap<String, Vec<KernelType>>>,
 }
 
 fn colab_variant(v: ipc::Variant) -> colab::Variant {
@@ -92,13 +105,9 @@ fn ipc_variant(v: &Value) -> ipc::Variant {
 }
 
 impl Core {
-    pub fn new(emit: Emit, data_dir: PathBuf) -> Arc<Self> {
-        Self::with_secrets(emit, data_dir, "colab-app")
-    }
-
     pub fn with_secrets(emit: Emit, data_dir: PathBuf, service: &str) -> Arc<Self> {
         let secrets = Arc::new(Secrets::new(service));
-        Arc::new(Self { emit, data_dir, notebooks: Default::default(), tooling: OnceCell::new(), auth: Mutex::new(None), auth_state: Default::default(), secrets })
+        Arc::new(Self { emit, data_dir, notebooks: Default::default(), tooling: OnceCell::new(), auth: Mutex::new(None), auth_state: Default::default(), pending: Default::default(), secrets, socks: watch::channel(None).0, peers: watch::channel(None).0, host_kernels: Default::default() })
     }
 
     pub async fn list_secrets(&self) -> Result<BTreeMap<String, String>> {
@@ -176,6 +185,76 @@ impl Core {
         self.tooling.get_or_try_init(|| async move { Tooling::new(&dir).await.map(Arc::new) }).await.cloned()
     }
 
+    pub async fn uv(&self) -> Result<PathBuf> {
+        Ok(self.tooling().await?.tools().uv.clone())
+    }
+
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    pub fn shim(&self) -> Result<Vec<(String, String)>> {
+        let shim = self.data_dir.join("python");
+        std::fs::create_dir_all(shim.join("google/colab"))?;
+        std::fs::write(shim.join("google/colab/__init__.py"), "")?;
+        std::fs::write(shim.join("google/colab/userdata.py"), USERDATA)?;
+        Ok(vec![("PYTHONPATH".into(), shim.to_string_lossy().into())])
+    }
+
+    fn remote_store(&self) -> PathBuf {
+        self.data_dir.join("remote-kernels.json")
+    }
+
+    pub fn machine(&self) -> Machine {
+        Machine { name: crate::tailscale::machine_name(&self.data_dir), kernels: crate::kernels::TYPES.clone() }
+    }
+
+    pub fn hosts(&self) -> Result<Vec<crate::hosts::Host>> {
+        crate::hosts::load(&self.data_dir.join("hosts.json"))
+    }
+
+    fn saved_host(&self, label: &str) -> Result<crate::hosts::Host> {
+        self.hosts()?.into_iter().find(|h| h.label == label).with_context(|| format!("no host named {label}"))
+    }
+
+    fn remote(&self, host: &crate::hosts::Host) -> RemoteHost {
+        RemoteHost::new(&host.label, &host.address, self.socks.subscribe()).patience(crate::tailscale::patience(self.peers.borrow().as_ref(), &host.address))
+    }
+
+    fn host(&self, label: &str) -> Result<Arc<RemoteHost>> {
+        Ok(Arc::new(self.remote(&self.saved_host(label)?)))
+    }
+
+    pub async fn host_status(&self) -> Result<Vec<HostStatus>> {
+        Ok(futures::future::join_all(self.hosts()?.into_iter().map(|h| self.probe(h))).await)
+    }
+
+    pub async fn host_state(&self, label: &str) -> Result<HostStatus> {
+        Ok(self.probe(self.saved_host(label)?).await)
+    }
+
+    async fn probe(&self, host: crate::hosts::Host) -> HostStatus {
+        let netmap = self.peers.borrow().clone();
+        let remote = self.remote(&host);
+        let reached = crate::tailscale::reach(netmap.as_ref(), &remote, &host.address).await;
+        let fetch = async { Ok::<Machine, anyhow::Error>(serde_json::from_value(crate::call(&mut remote.rpc().await?, "machine", Value::Null).await?)?) };
+        let machine = if reached.is_some() { tokio::time::timeout(Duration::from_secs(5), fetch).await.ok().and_then(Result::ok) } else { None };
+        if machine.is_none() {
+            let open: Vec<Arc<Open>> = self.notebooks.lock().unwrap().values().cloned().collect();
+            for o in open {
+                if let Some(Active::Remote(k)) = o.kernel.read().await.as_ref().map(|s| &s.active) && k.runtime.label == host.label && matches!(k.status(), KernelStatus::Idle | KernelStatus::Busy) {
+                    k.force_reconnect();
+                }
+            }
+        }
+        let mut seen = self.host_kernels.lock().unwrap();
+        if let Some(m) = &machine {
+            seen.insert(host.label.clone(), m.kernels.clone());
+        }
+        let (path, latency_ms) = reached.filter(|_| machine.is_some()).unwrap_or_default();
+        HostStatus { kernels: seen.get(&host.label).cloned().unwrap_or_default(), available: machine.is_some(), label: host.label, address: host.address, path, latency_ms }
+    }
+
     fn get(&self, path: &str) -> Result<Arc<Open>> {
         let key = Path::new(path).canonicalize().map_or(path.to_string(), |p| p.to_string_lossy().into());
         self.notebooks.lock().unwrap().get(&key).cloned().with_context(|| format!("notebook is not open: {path}"))
@@ -218,9 +297,13 @@ impl Core {
         let notebook = open.doc.notebook();
         let (core, o) = (self.clone(), open.clone());
         tokio::spawn(async move { core.start_project(o).await.map_err(|e| log::error!("tooling: {e:#}")) });
-        if store::get(&store::default_path(), &canonical).ok().flatten().is_some() {
+        if store::get::<store::Saved>(&store::default_path(), &canonical).ok().flatten().is_some() {
             let (core, o) = (self.clone(), open.clone());
             tokio::spawn(async move { core.reattach(o).await.map_err(|e| log::error!("reattach: {e:#}")) });
+        }
+        if let Ok(Some(saved)) = store::get::<RemoteKernel>(&self.remote_store(), &canonical) {
+            let (core, o) = (self.clone(), open.clone());
+            tokio::spawn(async move { core.reattach_remote(o, saved).await.map_err(|e| log::error!("reattach remote: {e:#}")) });
         }
         Ok(OpenedNotebook { path: key, notebook })
     }
@@ -244,16 +327,18 @@ impl Core {
         let opened = self.open_notebook(&target.to_string_lossy()).await?;
         let new = self.get(&opened.path)?;
         *new.choice.lock().unwrap() = old.choice.lock().unwrap().clone();
-        let store_path = store::default_path();
-        if let Some(saved) = store::get(&store_path, &old.path)? {
-            store::save(&store_path, &new.path, &saved)?;
-            store::remove(&store_path, &old.path)?;
+        for store_path in [store::default_path(), self.remote_store()] {
+            store::rename(&store_path, &old.path, &new.path)?;
         }
         if let Some(Session { active, choice, .. }) = session {
             let active = match active {
                 Active::Colab(mut k) => {
                     k.set_notebook(&new.path);
                     Active::Colab(k)
+                }
+                Active::Remote(mut k) => {
+                    k.set_notebook(&new.path);
+                    Active::Remote(k)
                 }
                 local => local,
             };
@@ -326,6 +411,7 @@ impl Core {
             }
             anyhow::Ok(())
         })?;
+        self.send(events::NOTEBOOK_CHANGED, NotebookChanged { path: open.key.clone(), notebook: open.doc.notebook() });
         open.sync_tooling().await;
         Ok(())
     }
@@ -385,10 +471,7 @@ impl Core {
         if live && serde_json::to_value(&state.choice)? == serde_json::to_value(Some(&choice))? {
             return Ok(false);
         }
-        self.select_kernel(path, choice.clone()).await?;
-        if let KernelChoice::Local = choice {
-            self.ensure_kernel(&self.get(path)?).await?;
-        }
+        self.select_kernel(path, choice).await?;
         Ok(true)
     }
 
@@ -407,7 +490,6 @@ impl Core {
             _ => None,
         };
         self.edit_cell(path, edit).await?;
-        self.send(events::NOTEBOOK_CHANGED, NotebookChanged { path: open.key.clone(), notebook: open.doc.notebook() });
         focus.inspect(|id| self.follow(&open, id));
         Ok(())
     }
@@ -621,6 +703,11 @@ impl Core {
             Active::Local(k) => k.shutdown().await,
             Active::Colab(k) if release => k.release().await,
             Active::Colab(k) => k.detach(),
+            Active::Remote(k) if release => {
+                drop(k);
+                self.delete_remote(&open.path).await
+            }
+            Active::Remote(_) => Ok(()),
         };
         self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Disconnected, choice: None });
         result
@@ -630,12 +717,10 @@ impl Core {
         let open = self.get(path)?;
         open.cancel.send_modify(|n| *n += 1);
         let _run = open.run.lock().await;
-        self.drop_kernel(&open, true).await?;
-        *open.choice.lock().unwrap() = Some(choice.clone());
-        if let KernelChoice::Local = choice {
-            self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Disconnected, choice: Some(choice) });
-            return Ok(());
+        if let Err(e) = self.drop_kernel(&open, true).await {
+            log::warn!("releasing the previous kernel of {}: {e:#}", open.key);
         }
+        *open.choice.lock().unwrap() = Some(choice.clone());
         if self.reuse_detached(&open, &choice).await? {
             return Ok(());
         }
@@ -673,17 +758,11 @@ impl Core {
         let clock = std::time::Instant::now();
         let started = async {
             Ok(match &choice {
-                KernelChoice::Local => {
-                    let uv = self.tooling().await?.tools().uv.clone();
-                    let shim = self.data_dir.join("python");
-                    std::fs::create_dir_all(shim.join("google/colab"))?;
-                    std::fs::write(shim.join("google/colab/__init__.py"), "")?;
-                    std::fs::write(shim.join("google/colab/userdata.py"), USERDATA)?;
-                    Active::Local(LocalKernel::start(&open.path, Some(&uv), vec![("PYTHONPATH".into(), shim.to_string_lossy().into())]).await?)
-                }
+                KernelChoice::Local => Active::Local(LocalKernel::start(&open.path, Some(&self.uv().await?), self.shim()?).await?),
                 KernelChoice::Colab { variant, accelerator, high_ram } => {
                     Active::Colab(self.colab().await?.start(&open.path, colab_variant(*variant), accelerator.as_deref(), *high_ram).await?)
                 }
+                KernelChoice::Remote { host } => Active::Remote(self.remote_kernel(open, host).await?),
             })
         };
         match started.await {
@@ -697,6 +776,40 @@ impl Core {
                 self.send(events::KERNEL_STATUS, KernelStatusEvent { path: open.key.clone(), status: KernelStatus::Disconnected, choice: None });
                 Err(e)
             }
+        }
+    }
+
+    async fn remote_kernel(&self, open: &Open, label: &str) -> Result<JupyterKernel<RemoteHost>> {
+        let host = self.host(label)?;
+        host.reachable().await?;
+        match store::get::<RemoteKernel>(&self.remote_store(), &open.path)? {
+            Some(saved) if saved.host == label => match host.clone().attach(&saved.kernel_id, &open.path).await {
+                Ok(kernel) => {
+                    log::info!("reusing detached kernel {} on {label} for {}", saved.kernel_id, open.key);
+                    return Ok(kernel);
+                }
+                Err(e) if colab::client::not_found(&e) => {}
+                Err(e) => return Err(e),
+            },
+            Some(_) => {
+                if let Err(e) = self.delete_remote(&open.path).await {
+                    log::warn!("{e:#}");
+                }
+            }
+            None => {}
+        }
+        let project = kernel_local::project_root(&open.path).file_name().map(|n| n.to_string_lossy().into_owned()).context("notebook has no project folder")?;
+        let kernel = host.start(&open.path, &project).await?;
+        store::save(&self.remote_store(), &open.path, &RemoteKernel { host: label.into(), kernel_id: kernel.kernel_id.clone() })?;
+        Ok(kernel)
+    }
+
+    async fn delete_remote(&self, path: &Path) -> Result<()> {
+        let Some(saved) = store::get::<RemoteKernel>(&self.remote_store(), path)? else { return Ok(()) };
+        let delete = async { self.host(&saved.host)?.jupyter(reqwest::Method::DELETE, &format!("/api/kernels/{}", saved.kernel_id)).await };
+        match tokio::time::timeout(Duration::from_secs(5), delete).await.unwrap_or_else(|_| Err(anyhow!("timed out"))) {
+            Err(e) if !colab::client::not_found(&e) => Err(e.context(format!("deleting kernel {} on host {}", saved.kernel_id, saved.host))),
+            _ => store::remove(&self.remote_store(), path),
         }
     }
 
@@ -741,6 +854,25 @@ impl Core {
         Ok(())
     }
 
+    async fn reattach_remote(self: Arc<Self>, open: Arc<Open>, saved: RemoteKernel) -> Result<()> {
+        let host = self.host(&saved.host)?;
+        host.reachable().await?;
+        let kernel = match host.attach(&saved.kernel_id, &open.path).await {
+            Err(e) if colab::client::not_found(&e) => {
+                store::remove(&self.remote_store(), &open.path)?;
+                return Err(e);
+            }
+            kernel => kernel?,
+        };
+        if open.kernel.read().await.is_some() || open.choice.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let choice = KernelChoice::Remote { host: saved.host };
+        *open.choice.lock().unwrap() = Some(choice.clone());
+        self.install(&open, Active::Remote(kernel), choice).await;
+        Ok(())
+    }
+
     pub async fn detach(&self, path: &str) -> Result<()> {
         let open = self.get(path)?;
         self.drop_kernel(&open, false).await
@@ -748,11 +880,12 @@ impl Core {
 
     pub async fn release(&self, path: &str) -> Result<()> {
         let open = self.get(path)?;
-        let colab = matches!(open.kernel.read().await.as_ref().map(|s| &s.active), Some(Active::Colab(_)));
-        if colab {
+        let elsewhere = matches!(open.kernel.read().await.as_ref().map(|s| &s.active), Some(Active::Colab(_) | Active::Remote(_)));
+        if elsewhere {
             return self.drop_kernel(&open, true).await;
         }
-        let Some(saved) = store::get(&store::default_path(), &open.path)? else { return Ok(()) };
+        self.delete_remote(&open.path).await?;
+        let Some(saved) = store::get::<store::Saved>(&store::default_path(), &open.path)? else { return Ok(()) };
         self.colab().await?.unassign(&saved.endpoint).await?;
         store::remove(&store::default_path(), &open.path)
     }
@@ -794,12 +927,20 @@ impl Core {
         Ok(state)
     }
 
-    pub async fn sign_in(&self, client_id: Option<String>, client_secret: Option<String>) -> Result<AuthState> {
+    pub fn begin_sign_in(&self, client_id: Option<String>, client_secret: Option<String>, redirect_uri: &str) -> Result<String> {
         let client = match client_id.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             Some(id) => OAuthClient { client_id: id.into(), client_secret: client_secret.unwrap_or_default().trim().into() },
             None => OAuthClient::default(),
         };
-        let state = match Auth::sign_in(client).await {
+        let pending = Auth::begin_sign_in(client, redirect_uri)?;
+        let url = pending.url.clone();
+        *self.pending.lock().unwrap() = Some(pending);
+        Ok(url)
+    }
+
+    pub async fn complete_sign_in(&self, code: &str, redirect_uri: &str) -> Result<AuthState> {
+        let pending = self.pending.lock().unwrap().take().context("no sign in is in progress")?;
+        let state = match pending.complete_sign_in(code, redirect_uri).await {
             Ok(auth) => {
                 let auth = Arc::new(auth);
                 let _ = std::fs::remove_file(self.data_dir.join("signed-out"));
@@ -1001,11 +1142,14 @@ fn timing(open: &Open, cell_id: &str, key: &str, at: DateTime<Utc>, replace: boo
 }
 
 async fn watch_status(core: Arc<Core>, weak: Weak<Open>) {
-    let mut last = None;
+    let (mut last, mut awake) = (None, None);
     loop {
         let Some(open) = weak.upgrade() else { return };
         if let Some(s) = open.kernel.read().await.as_ref() {
             let status = s.active.k().status();
+            if let Active::Local(_) = s.active {
+                crate::kernels::stay_awake(&mut awake, status == KernelStatus::Busy, || format!("Colab Notebook kernel running for {}", open.path.file_name().unwrap_or_default().to_string_lossy()));
+            }
             if last != Some(status) {
                 if matches!(status, KernelStatus::Dead | KernelStatus::Disconnected) {
                     open.cancel.send_modify(|n| *n += 1);

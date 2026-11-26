@@ -7,8 +7,9 @@ import type { Diagnostics } from '../bindings/Diagnostics'
 import type { InputRequest } from '../bindings/InputRequest'
 import type { KernelChoice } from '../bindings/KernelChoice'
 import type { KernelStatusEvent } from '../bindings/KernelStatusEvent'
+import type { KernelType } from '../bindings/KernelType'
 import type { NotebookChanged } from '../bindings/NotebookChanged'
-import type { Api, SaveState } from './ipc'
+import type { Api, Host, SaveState, TailscaleStatus } from './ipc'
 import { applyEdit } from './edit'
 
 const code = (id: string, source: string): Cell => ({ id, cell_type: 'code', source, metadata: {}, execution_count: null, outputs: [] })
@@ -40,10 +41,18 @@ export function mockApi(): Api {
   let cells = count ? generated(count) : sample
   let path = 'sample.ipynb'
   let execution = 0
-  let choice: KernelChoice | null = null
-  let started = false
+  let choice: KernelChoice | null = params.get('kernel') ? { kind: 'remote', host: params.get('kernel')! } : null
+  let started = !!choice
   let assigned: string | null = null
   let auth: AuthState = { state: 'signed_out' }
+  let hosts: Host[] = [{ label: 'anton', address: 'anton-colab' }, { label: 'lab', address: 'lab.example.ts.net' }]
+  const kernels: Record<string, KernelType[]> = { 'mac-work': [{ id: 'MPS', label: 'Apple M3 Pro' }], anton: [{ id: 'CPU', label: '13th Gen Intel(R) Core(TM) i7-1360P' }], lab: [{ id: 'CUDA', label: 'NVIDIA GeForce RTX 4090' }] }
+  const up = new Set(['anton'])
+  let server = 'Running'
+  const running = (hostname: string): TailscaleStatus => ({ state: 'running', hostname, login_name: 'user@example.com', dns_name: `${hostname}.example.ts.net` })
+  let tailscale: TailscaleStatus = params.get('tailscale') === 'running' ? running('pj-macbook') : { state: 'off', hostname: 'pj-macbook' }
+  const tailscales: ((e: TailscaleStatus) => void)[] = []
+  const setTailscale = (t: TailscaleStatus) => (tailscales.forEach((cb) => cb((tailscale = t))), t)
   let reply: ((v: string) => void) | null = null
   const outputs: ((e: CellOutputs) => void)[] = []
   const changed: ((e: NotebookChanged) => void)[] = []
@@ -131,10 +140,11 @@ export function mockApi(): Api {
     interrupt: async () => status('idle'),
     restart: async () => { execution = 0; if (started) status('idle') },
     selectKernel: async (_, c) => {
+      if (c.kind === 'remote' && !up.has(c.host)) throw new Error(`${c.host} is not reachable`)
       choice = c
-      started = c.kind === 'colab'
-      assigned = started ? new Date(Date.now() - 4_000_000).toISOString() : null
-      if (!started) return status('disconnected')
+      started = c.kind !== 'local'
+      assigned = c.kind === 'colab' ? new Date(Date.now() - 4_000_000).toISOString() : null
+      if (c.kind === 'local') return status('disconnected')
       status('connecting')
       await sleep(500)
       status('idle')
@@ -148,7 +158,7 @@ export function mockApi(): Api {
       return auth
     },
     authState: async () => auth,
-    colabInfo: async () => ({ balance: 87.42, hourly_rate: choice?.kind === 'colab' ? 1.76 : 0, eligible_gpus: ['T4', 'L4', 'A100'], eligible_tpus: ['V5E1', 'V6E1'] }),
+    colabInfo: async () => ({ balance: 87.42, hourly_rate: choice?.kind === 'colab' ? 1.76 : 0, eligible_gpus: ['T4', 'L4'], eligible_tpus: [] }),
     listRuntimes: async () => [],
     detach: async () => { started = false; choice = null; status('disconnected') },
     release: async () => { started = false; choice = null; status('disconnected') },
@@ -170,8 +180,21 @@ export function mockApi(): Api {
       cells = cells.map((c) => (c.cell_type === 'code' ? { ...c, source: c.source.replace(new RegExp(`\\b${w}\\b`, 'g'), name) } : c))
       emitCells()
     },
-    openUrl: async (url) => void window.open(url, '_blank'),
+    openUrl: async (url) => {
+      if (url !== tailscale.auth_url) return void window.open(url, '_blank')
+      await sleep(1500)
+      setTailscale(running(tailscale.hostname))
+    },
     version: async () => '0.1.0',
+    openAgentNotebooks: async () => localStorage.getItem('openAgentNotebooks') === 'true',
+    setOpenAgentNotebooks: async (on) => localStorage.setItem('openAgentNotebooks', String(on)),
+    serverStatus: async () => server,
+    stopServer: async (restart) => void (server = restart ? 'Running' : 'Stopped'),
+    startServer: async () => void (server = 'Running'),
+    machine: async () => {
+      const name = params.get('host') ?? 'mac-work'
+      return { name, kernels: kernels[name] ?? kernels['mac-work'] }
+    },
     completion: async (p) => {
       const names = new Set(cells.flatMap((c) => [...c.source.matchAll(/\b([A-Za-z_]\w*)\s*=|\b(?:def|class) (\w+)/g)].map((m) => m[1] ?? m[2])))
       return { isIncomplete: false, items: [
@@ -233,7 +256,28 @@ export function mockApi(): Api {
     onSaveState: sub(saves),
     onAgentFocus: async () => () => {},
     windowStartup: async () => null,
-    kernelState: async (path) => ({ path, status: 'disconnected', choice: null }),
+    windowHost: async () => params.get('host'),
+    listDir: async (dir) => {
+      const at = dir.replace(/\/$/, '') || '/home/pj'
+      if (!at.startsWith('/home/pj')) throw new Error(`${dir} does not exist`)
+      return { path: at, entries: at === '/home/pj' ? [{ name: 'mnist', dir: true }, { name: 'sample.ipynb', dir: false }] : [{ name: 'train.ipynb', dir: false }] }
+    },
+    listHosts: async () => hosts,
+    addHost: async (label, address) => (hosts = [...hosts, { label, address }]),
+    removeHost: async (label) => (hosts = hosts.filter((h) => h.label !== label)),
+    onServerOutdated: async () => () => {},
+    tailscaleStatus: async () => tailscale,
+    tailscaleEnable: async (hostname) => {
+      const name = hostname || tailscale.hostname
+      setTailscale({ state: 'starting', hostname: name })
+      await sleep(900)
+      return setTailscale({ state: 'needs_login', hostname: name, auth_url: 'https://login.tailscale.com/a/1f2e3d4c5b6a' })
+    },
+    tailscaleDisable: async () => setTailscale({ state: 'off', hostname: tailscale.hostname }),
+    tailscaleLogout: async () => setTailscale({ state: 'needs_login', hostname: tailscale.hostname, auth_url: 'https://login.tailscale.com/a/7a8b9c0d1e2f' }),
+    onTailscaleStatus: sub(tailscales),
+    hostStatus: async () => (await sleep(400), hosts.map((h) => ({ ...h, kernels: kernels[h.label] ?? [], ...(up.has(h.label) ? { available: true, path: 'direct' as const, latency_ms: Math.round(6 + Math.random() * 6) } : { available: false }) }))),
+    kernelState: async (path) => ({ path, status: choice ? 'idle' : 'disconnected', choice }),
     runtimeStarted: async () => assigned,
     diagnostics: async () => [],
     onMenu: async () => () => {},

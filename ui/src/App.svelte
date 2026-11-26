@@ -8,15 +8,20 @@
   import { api as ready, inTauri, type Api } from './lib/ipc'
   import Notebook from './lib/Notebook.svelte'
   import Settings from './lib/Settings.svelte'
-  import { account, alerts } from './lib/state.svelte'
+  import RemotePicker from './lib/RemotePicker.svelte'
+  import { account, alerts, remote } from './lib/state.svelte'
   import Titlebar from './lib/Titlebar.svelte'
 
   let api = $state.raw<Api>()
   let opened = $state<OpenedNotebook | null>(null)
-  let recent = $state<string[]>(JSON.parse(localStorage.getItem('recent') ?? '[]'))
+  let recentKey = 'recent'
+  let recent = $state<string[]>([])
+  let browsing = $state(false)
+  let outdated = $state<string | null>(null)
   let error = $state('')
   let cloning = $state(false)
   let settingsOpen = $state(false)
+  let serverPage = $state(0)
   let viewer = $state<{ path: string; text: string; line: number; character: number } | null>(null)
 
   async function load(path: string) {
@@ -25,7 +30,7 @@
       if (!result) return
       opened = result
       recent = [path, ...recent.filter((p) => p !== path)].slice(0, 8)
-      localStorage.setItem('recent', JSON.stringify(recent))
+      localStorage.setItem(recentKey, JSON.stringify(recent))
       settingsOpen = false
       error = ''
     } catch (e) {
@@ -39,14 +44,16 @@
   }
 
   const pick = async () => {
+    if (remote.host) return (browsing = true)
     const p = await api!.pickNotebook()
     if (p) load(p)
   }
 
   function menu(id: string) {
     if (id === 'open') pick()
-    else if (id === 'clone') cloning = true
+    else if (id === 'clone') cloning = !remote.host
     else if (id === 'settings') settingsOpen = true
+    else if (id === 'server') (settingsOpen = true), serverPage++
     else if (id.startsWith('open-recent:')) load(id.slice('open-recent:'.length))
   }
 
@@ -74,8 +81,12 @@
     window.addEventListener('keydown', key)
     window.addEventListener('click', click, true)
     ready.then(async (a) => {
+      remote.host = await a.windowHost()
+      recentKey = remote.host ? `recent:${remote.host}` : 'recent'
+      recent = JSON.parse(localStorage.getItem(recentKey) ?? '[]')
       api = a
       a.onMenu(menu)
+      a.onServerOutdated((v) => (outdated = v))
       a.onAuthState((s) => { account.auth = s })
       account.auth = await a.authState().catch(() => account.auth)
       const startup = await a.windowStartup()
@@ -88,13 +99,15 @@
 </script>
 
 {#if api && settingsOpen}
-  <Settings {api} onback={() => (settingsOpen = false)} />
+  {#key serverPage}<Settings {api} onback={() => (settingsOpen = false)} />{/key}
 {:else if !opened}
   <Titlebar>
     {#snippet center()}<span class="title" data-tauri-drag-region>Colab</span>{/snippet}
     {#snippet trail()}<button class="icon-button" onclick={() => (settingsOpen = true)} title="Settings" aria-label="Settings"><Icon d={GEAR} /></button>{/snippet}
   </Titlebar>
 {/if}
+
+{#if outdated}<div class="notice" role="status">{outdated}</div>{/if}
 
 {#if error || alerts.error}<div class="banner" role="alert">{error || alerts.error}<button onclick={() => ((error = ''), (alerts.error = ''))} aria-label="Dismiss">&times;</button></div>{/if}
 
@@ -109,7 +122,7 @@
     <h1>Open a notebook</h1>
     <div class="actions">
       <button class="primary" onclick={() => menu('open')}>Open notebook <kbd>&#8984;O</kbd></button>
-      <button class="outline" onclick={() => (cloning = true)}>Clone from Colab link</button>
+      {#if !remote.host}<button class="outline" onclick={() => (cloning = true)}>Clone from Colab link</button>{/if}
     </div>
     {#if recent.length}
       <h2>Recent</h2>
@@ -133,6 +146,10 @@
   </aside>
 {/if}
 
+{#if api && browsing && remote.host}
+  <RemotePicker {api} host={remote.host} start={opened?.path.replace(/\/[^/]*$/, '') ?? ''} onclose={() => (browsing = false)} onopen={(p) => ((browsing = false), load(p))} />
+{/if}
+
 {#if api && cloning}
   <CloneDialog {api} onclose={() => (cloning = false)} onopen={(p) => ((cloning = false), load(p))} />
 {/if}
@@ -143,6 +160,7 @@
   .hidden { display: none; }
   .dir { color: var(--faint); font-size: 0.923rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 14px; background: color-mix(in srgb, var(--error) 9.4%, transparent); color: var(--error); border-bottom: 1px solid color-mix(in srgb, var(--error) 25%, transparent); font-size: 0.962rem; }
+  .notice { padding: 6px 14px; background: var(--panel); color: var(--muted); border-bottom: 1px solid var(--border); font-size: 0.962rem; }
   .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; padding-top: 18vh; gap: 10px; }
   .welcome h1 { font-size: 1.538rem; font-weight: 600; margin: 0 0 8px; }
   .welcome h2 { font-size: 0.923rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 4px; font-weight: 600; }

@@ -1,0 +1,27 @@
+{
+  "Node": {
+    "ID": 1000000000000009,
+    "StableID": "nNode8CNTRL",
+    "Name": "anton-rex.example.ts.net.",
+    "User": 1000000000000002,
+    "Addresses": [
+      "100.90.25.52/32",
+      "fd7a:115c:a1e0::d62f:1935/128"
+    ],
+    "AllowedIPs": [
+      "100.90.25.52/32",
+      "fd7a:115c:a1e0::d62f:1935/128"
+    ],
+    "HomeDERP": 6,
+    "Created": "2026-11-04T03:29:38.108040779Z",
+    "Cap": 148,
+    "Online": true,
+    "ComputedName": "anton-rex",
+    "ComputedNameWithHost": "anton-rex"
+  },
+  "UserProfile": {
+    "ID": 1000000000000002,
+    "LoginName": "user@example.com",
+    "DisplayName": "Example User"
+  }
+}

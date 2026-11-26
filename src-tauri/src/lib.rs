@@ -1,35 +1,45 @@
-pub mod bridge;
-pub mod engine;
-pub mod ipc;
-pub mod mcp;
 mod menu;
-mod outputs;
-pub mod secrets;
+mod server;
+mod tray;
 mod windows;
 
-use crate::engine::Core;
-use ipc::*;
-use std::sync::Arc;
-use tauri::{Emitter, Manager, State};
+use serde_json::{Value, json};
+use windows::{LOCAL, host_of};
+use tauri::Manager;
 
 type Result<T> = std::result::Result<T, String>;
-type App<'a> = State<'a, Arc<Core>>;
 
-fn err(e: anyhow::Error) -> String {
-    format!("{e:#}")
+fn snake(params: Value) -> Value {
+    let Value::Object(map) = params else { return params };
+    map.into_iter().map(|(k, v)| (k.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['_', c.to_ascii_lowercase()] } else { vec![c] }).collect::<String>(), v)).collect()
 }
 
 #[tauri::command]
-async fn open_notebook(handle: tauri::AppHandle, window: tauri::WebviewWindow, app: App<'_>, path: String) -> Result<Option<OpenedNotebook>> {
-    let opened = app.open_notebook(&path).await.map_err(err)?;
-    if !windows::claim(&handle, window.label(), &opened.path) {
-        return Ok(None);
-    }
-    drop(window.set_title(std::path::Path::new(&opened.path).file_name().map_or("", |n| n.to_str().unwrap_or_default())));
-    if let Err(e) = menu::opened(&handle, &opened.path, None) {
+async fn call(handle: tauri::AppHandle, window: tauri::WebviewWindow, method: String, params: Option<Value>) -> Result<Value> {
+    let params = snake(params.unwrap_or_default());
+    let host = host_of(window.label());
+    let result = server::of(&handle, &host).call(&method, params.clone()).await?;
+    let recent = match method.as_str() {
+        "open_notebook" => {
+            let path = result["path"].as_str().unwrap_or_default();
+            if !windows::claim(&handle, window.label(), path) {
+                return Ok(Value::Null);
+            }
+            let name = std::path::Path::new(path).file_name().map_or("", |n| n.to_str().unwrap_or_default());
+            drop(window.set_title(&if host == LOCAL { name.into() } else { format!("{name} [{host}]") }));
+            menu::opened(&handle, &host, path, None)
+        }
+        "rename_notebook" => {
+            let path = params["path"].as_str().unwrap_or_default();
+            let old = if host == LOCAL { std::fs::canonicalize(path).map_or(path.into(), |p| p.to_string_lossy().into_owned()) } else { path.into() };
+            menu::opened(&handle, &host, result.as_str().unwrap_or_default(), Some(&old))
+        }
+        _ => Ok(()),
+    };
+    if let Err(e) = recent {
         log::error!("recent menu: {e:#}");
     }
-    Ok(Some(opened))
+    Ok(result)
 }
 
 #[tauri::command]
@@ -38,164 +48,49 @@ fn window_startup(handle: tauri::AppHandle, window: tauri::WebviewWindow) -> Opt
 }
 
 #[tauri::command]
-async fn rename_notebook(handle: tauri::AppHandle, app: App<'_>, path: String, new_name: String) -> Result<String> {
-    let old = std::fs::canonicalize(&path).map_or(path.clone(), |p| p.to_string_lossy().into());
-    let renamed = app.rename_notebook(&path, &new_name).await.map_err(err)?;
-    if let Err(e) = menu::opened(&handle, &renamed, Some(&old)) {
-        log::error!("recent menu: {e:#}");
-    }
-    Ok(renamed)
+fn window_host(window: tauri::WebviewWindow) -> Option<String> {
+    Some(host_of(window.label())).filter(|h| h != LOCAL)
 }
 
 #[tauri::command]
-async fn edit_cell(app: App<'_>, path: String, edit: CellEdit) -> Result<()> {
-    app.edit_cell(&path, edit).await.map_err(err)
+async fn sign_in(handle: tauri::AppHandle, window: tauri::WebviewWindow, client_id: Option<String>, client_secret: Option<String>) -> Result<Value> {
+    let server = server::of(&handle, &host_of(window.label()));
+    let loopback = colab::Loopback::bind().await.map_err(|e| format!("{e:#}"))?;
+    let url = server.call("begin_sign_in", json!({"client_id": client_id, "client_secret": client_secret, "redirect_uri": loopback.redirect_uri})).await?;
+    let url = url.as_str().unwrap_or_default();
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())?;
+    let code = loopback.code(url).await.map_err(|e| format!("{e:#}"))?;
+    server.call("complete_sign_in", json!({"code": code, "redirect_uri": loopback.redirect_uri})).await
 }
 
 #[tauri::command]
-async fn run_cell(app: App<'_>, path: String, cell_id: String) -> Result<()> {
-    app.run_cell(&path, &cell_id).await.map_err(err)
+fn list_hosts() -> Result<Vec<colab_server::hosts::Host>> {
+    colab_server::hosts::load(&colab_server::hosts::file()).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
-async fn run_all(app: App<'_>, path: String) -> Result<()> {
-    app.run_all(&path).await.map_err(err)
+fn add_host(handle: tauri::AppHandle, label: String, address: String) -> Result<Vec<colab_server::hosts::Host>> {
+    let hosts = colab_server::hosts::add(&colab_server::hosts::file(), &label, &address).map_err(|e| format!("{e:#}"))?;
+    let _ = menu::refresh(&handle).map_err(|e| log::error!("menu: {e:#}"));
+    Ok(hosts)
 }
 
 #[tauri::command]
-async fn interrupt(app: App<'_>, path: String) -> Result<()> {
-    app.interrupt(&path).await.map_err(err)
-}
-
-#[tauri::command]
-async fn restart(app: App<'_>, path: String) -> Result<()> {
-    app.restart(&path).await.map_err(err)
-}
-
-#[tauri::command]
-async fn kernel_state(app: App<'_>, path: String) -> Result<KernelStatusEvent> {
-    app.kernel_state(&path).await.map_err(err)
-}
-
-#[tauri::command]
-async fn runtime_started(app: App<'_>, path: String) -> Result<Option<String>> {
-    app.runtime_started(&path).await.map_err(err)
-}
-
-#[tauri::command]
-fn diagnostics(app: App<'_>, path: String) -> Result<Vec<Diagnostics>> {
-    app.diagnostics(&path).map_err(err)
-}
-
-#[tauri::command]
-async fn select_kernel(app: App<'_>, path: String, choice: KernelChoice) -> Result<()> {
-    app.select_kernel(&path, choice).await.map_err(err)
-}
-
-#[tauri::command]
-async fn send_comm(app: App<'_>, message: CommMessage) -> Result<()> {
-    app.send_comm(message).await.map_err(err)
-}
-
-#[tauri::command]
-async fn sign_in(app: App<'_>, client_id: Option<String>, client_secret: Option<String>) -> Result<AuthState> {
-    app.sign_in(client_id, client_secret).await.map_err(err)
-}
-
-#[tauri::command]
-async fn sign_out(app: App<'_>) -> Result<()> {
-    app.sign_out().await.map_err(err)
-}
-
-#[tauri::command]
-async fn auth_state(app: App<'_>) -> Result<AuthState> {
-    app.auth_state().await.map_err(err)
-}
-
-#[tauri::command]
-async fn colab_info(app: App<'_>) -> Result<ColabInfo> {
-    app.colab_info().await.map_err(err)
-}
-
-#[tauri::command]
-async fn list_runtimes(app: App<'_>) -> Result<Vec<Runtime>> {
-    app.list_runtimes().await.map_err(err)
-}
-
-#[tauri::command]
-async fn detach(app: App<'_>, path: String) -> Result<()> {
-    app.detach(&path).await.map_err(err)
-}
-
-#[tauri::command]
-async fn release(app: App<'_>, path: String) -> Result<()> {
-    app.release(&path).await.map_err(err)
-}
-
-#[tauri::command]
-async fn clone_link(app: App<'_>, url: String, dest: String) -> Result<String> {
-    app.clone_link(&url, &dest).await.map_err(err)
-}
-
-#[tauri::command]
-async fn completion(app: App<'_>, pos: CellPosition) -> Result<serde_json::Value> {
-    app.completion(pos).await.map_err(err)
-}
-
-#[tauri::command]
-async fn hover(app: App<'_>, pos: CellPosition) -> Result<serde_json::Value> {
-    app.hover(pos).await.map_err(err)
-}
-
-#[tauri::command]
-async fn definition(app: App<'_>, pos: CellPosition) -> Result<serde_json::Value> {
-    app.definition(pos).await.map_err(err)
-}
-
-#[tauri::command]
-async fn prepare_rename(app: App<'_>, pos: CellPosition) -> Result<serde_json::Value> {
-    app.prepare_rename(pos).await.map_err(err)
-}
-
-#[tauri::command]
-async fn rename_symbol(app: App<'_>, pos: CellPosition, new_name: String) -> Result<()> {
-    app.rename_symbol(pos, &new_name).await.map_err(err)
+fn remove_host(handle: tauri::AppHandle, label: String) -> Result<Vec<colab_server::hosts::Host>> {
+    let hosts = colab_server::hosts::remove(&colab_server::hosts::file(), &label).map_err(|e| format!("{e:#}"))?;
+    let _ = menu::refresh(&handle).map_err(|e| log::error!("menu: {e:#}"));
+    Ok(hosts)
 }
 
 #[tauri::command]
 async fn check_link(url: String) -> Result<String> {
-    colab::clone::fetch(&url).await.map(|f| f.name).map_err(err)
+    colab::clone::fetch(&url).await.map(|f| f.name).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
 fn open_url(url: String) -> Result<()> {
     if !url.starts_with("https://") && !url.starts_with("http://") { return Err(format!("refusing to open {url}")) }
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn format_cell(app: App<'_>, path: String, cell_id: String) -> Result<()> {
-    app.format(&path, Some(&cell_id)).await.map_err(err)
-}
-
-#[tauri::command]
-async fn format_notebook(app: App<'_>, path: String) -> Result<()> {
-    app.format(&path, None).await.map_err(err)
-}
-
-#[tauri::command]
-async fn organize_imports(app: App<'_>, path: String, cell_id: Option<String>) -> Result<()> {
-    app.organize_imports(&path, cell_id.as_deref()).await.map_err(err)
-}
-
-#[tauri::command]
-async fn code_actions(app: App<'_>, pos: CellPosition) -> Result<Vec<crate::ipc::CodeActionItem>> {
-    app.code_actions(pos).await.map_err(err)
-}
-
-#[tauri::command]
-async fn apply_code_action(app: App<'_>, path: String, id: u32) -> Result<()> {
-    app.apply_code_action(&path, id).await.map_err(err)
 }
 
 #[tauri::command]
@@ -236,28 +131,28 @@ fn all_fonts() -> Vec<String> {
 }
 
 #[tauri::command]
-async fn read_file(app: App<'_>, path: String) -> Result<String> {
-    app.read_file(&path).map_err(err)
+fn open_agent_notebooks(handle: tauri::AppHandle) -> bool {
+    windows::opens_agent_notebooks(&handle)
 }
 
 #[tauri::command]
-async fn send_input(app: App<'_>, path: String, value: String) -> Result<()> {
-    app.send_input(&path, value).await.map_err(err)
+fn set_open_agent_notebooks(handle: tauri::AppHandle, on: bool) -> Result<()> {
+    windows::set_opens_agent_notebooks(&handle, on).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn list_secrets(app: App<'_>) -> Result<std::collections::BTreeMap<String, String>> {
-    app.list_secrets().await.map_err(err)
+fn server_status(handle: tauri::AppHandle) -> &'static str {
+    server::of(&handle, LOCAL).status()
 }
 
 #[tauri::command]
-async fn set_secret(app: App<'_>, name: String, value: String) -> Result<()> {
-    app.set_secret(&name, &value).await.map_err(err)
+fn start_server(handle: tauri::AppHandle) {
+    server::of(&handle, LOCAL).start()
 }
 
 #[tauri::command]
-async fn delete_secret(app: App<'_>, name: String) -> Result<()> {
-    app.delete_secret(&name).await.map_err(err)
+async fn stop_server(handle: tauri::AppHandle, restart: bool) {
+    server::of(&handle, LOCAL).stop(restart).await
 }
 
 #[tauri::command]
@@ -273,33 +168,28 @@ pub fn run() {
         .menu(menu::initial)
         .on_menu_event(menu::clicked)
         .manage(windows::Windows::default())
-        .on_window_event(|window, event| if let tauri::WindowEvent::Destroyed = event { windows::closed(window.app_handle(), window.label()) })
+        .manage(server::Servers::default())
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Destroyed => {
+                windows::closed(window.app_handle(), window.label());
+                server::closed(window.app_handle(), window.label());
+            }
+            tauri::WindowEvent::Focused(true) => { let _ = menu::refresh(window.app_handle()).map_err(|e| log::error!("menu: {e:#}")); }
+            _ => {}
+        })
         .setup(|app| {
-            let handle = app.handle().clone();
-            let emit: crate::engine::Emit = Arc::new(move |event, payload| match (event, payload.get("path").and_then(|p| p.as_str())) {
-                (ipc::events::AGENT_OPEN, Some(path)) => windows::agent_open(&handle, path),
-                (ipc::events::AGENT_CLOSE, Some(path)) => windows::agent_close(&handle, path),
-                _ => drop(handle.emit(event, payload)),
-            });
-            let core = Core::new(emit, app.path().app_data_dir()?);
-            app.manage(core.clone());
-            let server = core.clone();
-            tauri::async_runtime::spawn(async move { core.install_tools().await });
-            tauri::async_runtime::spawn(async move { crate::mcp::serve(server, crate::mcp::PORT).await.map_err(|e| log::error!("mcp server: {e:#}")) });
+            server::of(app.handle(), LOCAL);
+            tray::create(app.handle())?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            open_notebook, rename_notebook, edit_cell, run_cell, run_all, interrupt, restart, select_kernel, kernel_state, runtime_started, diagnostics, send_comm,
-            sign_in, sign_out, auth_state, colab_info, list_runtimes, detach, release, clone_link,
-            completion, hover, definition, prepare_rename, rename_symbol, check_link, open_url, format_cell, format_notebook, organize_imports, code_actions, apply_code_action, read_file, send_input, list_monospace_fonts, list_fonts, file_menu, window_startup, list_secrets, set_secret, delete_secret
-        ])
+        .invoke_handler(tauri::generate_handler![call, window_startup, window_host, sign_in, list_hosts, add_host, remove_host, check_link, open_url, list_monospace_fonts, list_fonts, open_agent_notebooks, set_open_agent_notebooks, server_status, start_server, stop_server, file_menu])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
             #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => { let _ = windows::create(app, "").map_err(|e| log::error!("new window: {e}")); }
+            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => { let _ = windows::create(app, LOCAL, "").map_err(|e| log::error!("new window: {e}")); }
             _ => {}
         });
 }

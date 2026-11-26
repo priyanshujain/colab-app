@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
   import { inTauri } from './ipc'
+  import { remote } from './state.svelte'
 
   let { lead, center, trail }: { lead?: Snippet; center?: Snippet; trail?: Snippet } = $props()
   const traffic = inTauri && /Mac/.test(navigator.userAgent)
 </script>
 
 <header class="titlebar" class:traffic data-tauri-drag-region>
-  <div class="lead" data-tauri-drag-region>{@render lead?.()}</div>
+  <div class="lead" data-tauri-drag-region>{#if remote.host}<span class="remote" title="Connected to {remote.host}">{remote.host}</span>{/if}{@render lead?.()}</div>
   <div class="center" data-tauri-drag-region>{@render center?.()}</div>
   <div class="trail" data-tauri-drag-region>{@render trail?.()}</div>
 </header>
@@ -17,5 +18,6 @@
   .traffic .lead { padding-left: calc(var(--traffic-pad) - 12px); }
   .lead, .trail { display: flex; align-items: center; gap: 4px; min-width: 0; align-self: stretch; }
   .trail { justify-content: flex-end; }
+  .remote { flex: none; padding: 1px 8px; border-radius: 4px; background: var(--accent); color: var(--button-fg); font-size: 0.846rem; }
   .center { display: flex; align-items: center; justify-content: center; max-width: 44vw; min-width: 0; align-self: stretch; }
 </style>

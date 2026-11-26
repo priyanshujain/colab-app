@@ -1,5 +1,5 @@
-use colab_app_lib::engine::{Core, Emit};
-use colab_app_lib::ipc::{CellEdit, CellPosition, KernelChoice};
+use colab_server::engine::{Core, Emit};
+use colab_server::ipc::{CellEdit, CellPosition, KernelChoice};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,14 +55,12 @@ async fn local_notebook_runs_saves_merges_and_uses_tooling() {
     let p = opened.path.clone();
 
     core.select_kernel(&p, KernelChoice::Local).await.unwrap();
-    let selected = wait_for(&events, "selected status", |n, _| n == "kernel-status").await;
-    assert_eq!((selected["status"].as_str(), selected["choice"]["kind"].as_str()), (Some("disconnected"), Some("local")));
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!events.lock().unwrap().iter().any(|(n, v)| n == "kernel-status" && v["status"] != "disconnected"), "selecting local started a kernel");
+    wait_for(&events, "local kernel idle", |n, v| n == "kernel-status" && v["status"] == "idle" && v["choice"]["kind"] == "local").await;
+    let statuses: Vec<(String, Value)> = events.lock().unwrap().iter().filter(|(n, _)| n == "kernel-status").map(|(_, v)| (v["status"].as_str().unwrap().into(), v["choice"]["kind"].clone())).collect();
+    assert_eq!(statuses[..2], [("connecting".into(), json!("local")), ("idle".into(), json!("local"))], "selecting local did not start the kernel: {statuses:?}");
     core.run_all(&p).await.unwrap();
-    assert!(events.lock().unwrap().iter().any(|(n, v)| n == "kernel-status" && v["status"] == "connecting" && v["choice"]["kind"] == "local"));
 
-    let saved = wait_file(&path, |v| v["cells"][1]["execution_count"] == 2).await;
+    let saved = wait_file(&path, |v| v["cells"][1]["execution_count"] == 2 && v["cells"][2]["outputs"][0]["output_type"] == "error").await;
     let text = |cell: usize, out: usize| saved["cells"][cell]["outputs"][out]["text"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect::<String>();
     assert_eq!(text(0, 0), "100%");
     assert_eq!(text(0, 1), "\nloaded 3\n");
@@ -91,7 +89,7 @@ async fn local_notebook_runs_saves_merges_and_uses_tooling() {
     disk["cells"][2]["source"] = json!(["raise ValueError('edited outside')"]);
     disk["cells"][1]["source"] = json!(["stale"]);
     std::fs::write(&path, serde_json::to_string_pretty(&disk).unwrap()).unwrap();
-    let changed = wait_for(&events, "notebook-changed", |n, _| n == "notebook-changed").await;
+    let changed = wait_for(&events, "external notebook-changed", |n, v| n == "notebook-changed" && v["notebook"]["cells"][2]["source"] != "raise ValueError('bad shape')").await;
     assert_eq!(changed["notebook"]["cells"][2]["source"], "raise ValueError('edited outside')");
     assert_eq!(changed["notebook"]["cells"][1]["source"], "total = sum( rows )");
 

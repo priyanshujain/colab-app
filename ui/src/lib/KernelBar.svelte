@@ -4,19 +4,25 @@
   import type { KernelChoice } from '../bindings/KernelChoice'
   import type { KernelStatus } from '../bindings/KernelStatus'
   import type { KernelStatusEvent } from '../bindings/KernelStatusEvent'
+  import type { KernelType } from '../bindings/KernelType'
+  import type { Machine } from '../bindings/Machine'
   import type { Variant } from '../bindings/Variant'
-  import type { Api } from './ipc'
+  import type { Api, HostStatus } from './ipc'
   import { account, settings } from './state.svelte'
   import { duration } from './timing'
 
-  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local'), started = $bindable(null), label = $bindable('') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: 'local' | 'colab'; started?: number | null; label?: string } = $props()
+  let { api, path, wide, status = $bindable('disconnected'), kind = $bindable('local'), started = $bindable(null), label = $bindable('') }: { api: Api; path: string; wide: boolean; status?: KernelStatus; kind?: string; started?: number | null; label?: string } = $props()
 
   let active = $state<KernelChoice | null>(null)
   let info = $state<ColabInfo | null>(null)
   let error = $state('')
+  let place = $state('local')
   let runtime = $state('DEFAULT')
   let highRam = $state(false)
   let busy = $state(false)
+  let picking = $state(false)
+  let hosts = $state<HostStatus[]>([])
+  let machine = $state<Machine | null>(null)
 
   const runtimes = $derived([
     ['DEFAULT', 'CPU'],
@@ -24,10 +30,38 @@
     ...(info?.eligible_tpus ?? []).map((t) => [`TPU:${t}`, `TPU ${t}`]),
   ])
   const live = $derived(status !== 'disconnected' && status !== 'dead')
-  const onColab = $derived(active?.kind === 'colab' && live)
-  const ready = $derived(onColab && (status === 'idle' || status === 'busy'))
+  const ready = $derived(active?.kind === 'colab' && (status === 'idle' || status === 'busy'))
+  const hostOf = (c: KernelChoice | null) => (c?.kind === 'remote' ? hosts.find((h) => h.label === c.host) : undefined)
+  const kernelsOf = (c: KernelChoice) => (c.kind === 'local' ? machine?.kernels : hostOf(c)?.kernels) ?? []
+  const describe = (c: KernelChoice) => c.kind === 'colab' ? `Colab ${c.accelerator ?? (c.variant === 'DEFAULT' ? 'CPU' : c.variant)}` : [c.kind === 'local' ? machine?.name : c.host, ...kernelsOf(c).map((k) => k.id)].join(' ')
+  const key = (c: KernelChoice | null) => JSON.stringify(c && (c.kind === 'colab' ? [c.kind, c.variant, c.accelerator, c.high_ram] : c.kind === 'remote' ? [c.kind, c.host] : [c.kind]))
+  const typeName = (k: KernelType) => (k.label ? `${k.id} · ${k.label}` : k.id)
+
+  const selected = $derived.by((): KernelChoice => {
+    if (place === 'local') return { kind: 'local' }
+    if (place !== 'colab') return { kind: 'remote', host: place.slice(7) }
+    const [variant, accelerator] = runtime.split(':') as [Variant, string?]
+    return { kind: 'colab', variant, accelerator: accelerator ?? null, high_ram: highRam }
+  })
+  const unavailable = $derived(hostOf(selected)?.available === false)
+  const current = $derived(key(selected) === key(active) && (live || (active?.kind === 'local' && status === 'disconnected')))
+  const name = $derived(active ? describe(active) : 'Not connected')
+  const phase = $derived(!active ? '' : hostOf(active)?.available === false ? 'unavailable' : active.kind === 'local' && status === 'disconnected' ? '' : status)
   $effect(() => void (label = name))
-  const name = $derived(!active ? 'No kernel' : active.kind === 'local' ? 'Local' : `Colab ${active.accelerator ?? (active.variant === 'DEFAULT' ? 'CPU' : active.variant)}`)
+  $effect(() => void (kind = active?.kind ?? 'local'))
+
+  let probing: Promise<unknown> | null = null
+  const refreshHosts = () => (probing ??= api.hostStatus().then((s) => (hosts = s), () => {}).finally(() => (probing = null)))
+  $effect(() => {
+    const every = picking ? 3000 : active?.kind === 'remote' ? 10000 : 0
+    if (!every) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let stop = false
+    const loop = () => refreshHosts().then(() => void (stop || (timer = setTimeout(loop, every))))
+    if (picking) loop()
+    else timer = setTimeout(loop, every)
+    return () => ((stop = true), clearTimeout(timer))
+  })
 
   let now = $state(Date.now())
   $effect(() => {
@@ -39,33 +73,35 @@
   })
 
   const attempt = (f: () => Promise<unknown>) => f().then(() => (error = ''), (e) => (error = String(e)))
-  const refresh = () => attempt(async () => (info = await api.colabInfo()))
-
-  function choose(k: 'local' | 'colab') {
-    kind = k
-    if (k === 'local') attempt(() => api.selectKernel(path, { kind: 'local' }))
-    else if (!info) refresh()
-  }
+  $effect(() => void (place === 'colab' && !info && attempt(async () => (info = await api.colabInfo()))))
 
   async function connect() {
     busy = true
     await attempt(async () => {
-      if (account.auth.state !== 'signed_in') account.auth = await api.signIn(settings.clientId.trim() || null, settings.clientSecret.trim() || null)
-      if (account.auth.state !== 'signed_in') throw new Error('Sign in to Colab first (Settings)')
-      const [variant, accelerator] = runtime.split(':') as [Variant, string?]
-      await api.selectKernel(path, { kind: 'colab', variant, accelerator: accelerator ?? null, high_ram: highRam })
+      if (selected.kind === 'colab' && account.auth.state !== 'signed_in') account.auth = await api.signIn(settings.clientId.trim() || null, settings.clientSecret.trim() || null)
+      if (selected.kind === 'colab' && account.auth.state !== 'signed_in') throw new Error('Sign in to Colab first (Settings)')
+      await api.selectKernel(path, selected)
     })
     busy = false
+  }
+
+  function show(c: KernelChoice) {
+    place = c.kind === 'remote' ? `remote:${c.host}` : c.kind
+    if (c.kind !== 'colab') return
+    runtime = c.accelerator ? `${c.variant}:${c.accelerator}` : c.variant
+    highRam = c.high_ram
   }
 
   onMount(() => {
     const apply = (e: KernelStatusEvent) => {
       if (e.path !== path) return
+      if (e.choice && key(e.choice) !== key(active)) show(e.choice)
       status = e.status
       active = e.choice
-      if (e.choice) kind = e.choice.kind
     }
     const sub = api.onKernelStatus(apply)
+    refreshHosts()
+    api.machine().then((m) => (machine = m), (e) => (error = String(e)))
     sub.then(() => api.kernelState(path)).then(apply, () => {})
     return () => void sub.then((u) => u())
   })
@@ -73,27 +109,36 @@
 
 <div class="bar">
   {#if error}<span class="error" title={error}>{error}</span>{/if}
-  {#if wide && active}<span class="status">{name} <span class="state {status}">{status}</span></span>{/if}
+  {#if wide}<span class="status">{name}{#if phase}{' '}<span class="state {phase}">{phase}</span>{/if}</span>{/if}
   {#if wide && started !== null}<span class="status" title="Time since the Colab runtime started">{duration(now - started)}</span>{/if}
-  <select value={kind} onchange={(e) => choose(e.currentTarget.value as 'local' | 'colab')} aria-label="Kernel" title="Kernel">
-    <option value="local">Local .venv</option>
+  <select bind:value={place} onfocus={() => (picking = true)} onblur={() => (picking = false)} onpointerdown={refreshHosts} aria-label="Kernel location" title="Kernel location">
+    <option value="local">{machine?.name ?? ''}</option>
+    {#each hosts as h (h.label)}<option value="remote:{h.label}" disabled={!h.available}>{h.label}{h.available ? '' : ' (unavailable)'}</option>{/each}
     <option value="colab">Colab</option>
   </select>
-  {#if kind === 'colab' && !onColab}
-    <select bind:value={runtime} aria-label="Runtime type" title="Runtime type">
+  {#if place === 'colab'}
+    <select bind:value={runtime} aria-label="Kernel type" title="Kernel type">
       {#each runtimes as [value, name] (value)}<option {value}>{name}</option>{/each}
     </select>
     <label class="check" title="High RAM"><input type="checkbox" bind:checked={highRam} />{wide ? 'High RAM' : 'RAM+'}</label>
-    <button class="primary" onclick={connect} disabled={busy || status === 'connecting'}>{busy ? 'Connecting...' : 'Connect'}</button>
+  {:else}
+    {@const types = kernelsOf(selected)}
+    <select disabled={unavailable} aria-label="Kernel type" title={types.map(typeName).join(', ')}>
+      {#each types as k (k.id)}<option>{typeName(k)}</option>{:else}<option>Unknown</option>{/each}
+    </select>
   {/if}
-  {#if onColab}
+  {#if current && active?.kind === 'colab'}
     <button onclick={() => attempt(() => api.detach(path))} title="Disconnect but keep the runtime">Detach</button>
     <button onclick={() => attempt(() => api.release(path))} title="Release the runtime">Release</button>
+  {:else if !current}
+    <button class="primary" onclick={connect} disabled={busy || unavailable || status === 'connecting'}>{busy ? 'Connecting...' : 'Connect'}</button>
   {/if}
 </div>
 
 <style>
   .bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .bar select { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .bar select:disabled { color: var(--faint); cursor: default; }
   .status { color: var(--muted); white-space: nowrap; font-size: 0.923rem; margin: 0 4px; }
   .state { color: var(--faint); margin-left: 2px; }
   .state.dead { color: var(--error); }

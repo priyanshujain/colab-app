@@ -1,0 +1,305 @@
+{
+  "Version": "1.102.3-t9329c3677-ga522f65e9",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "TailscaleIPs": [
+    "100.124.92.115",
+    "fd7a:115c:a1e0::b401:5c9f"
+  ],
+  "Self": {
+    "ID": "nNode1CNTRL",
+    "NodeID": 1000000000000001,
+    "HostName": "mac-work",
+    "DNSName": "mac-work.example.ts.net.",
+    "OS": "macOS",
+    "UserID": 1000000000000002,
+    "TailscaleIPs": [
+      "100.124.92.115",
+      "fd7a:115c:a1e0::b401:5c9f"
+    ],
+    "AllowedIPs": [
+      "100.124.92.115/32",
+      "fd7a:115c:a1e0::b401:5c9f/128"
+    ],
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "2026-02-21T19:56:30.724976775Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": true,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "TaildropTarget": 0,
+    "NoFileSharingReason": "",
+    "InNetworkMap": true,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "MagicDNSSuffix": "example.ts.net",
+  "CurrentTailnet": {
+    "Name": "user@example.com",
+    "MagicDNSSuffix": "example.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "ExtraRecords": null,
+  "Peer": {
+    "peer-0": {
+      "ID": "nNode2CNTRL",
+      "NodeID": 1000000000000003,
+      "HostName": "anton",
+      "DNSName": "anton.example.ts.net.",
+      "OS": "linux",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.68.126.75",
+        "fd7a:115c:a1e0::43a:7e4b"
+      ],
+      "AllowedIPs": [
+        "100.68.126.75/32",
+        "fd7a:115c:a1e0::43a:7e4b/128"
+      ],
+      "RxBytes": 290445652,
+      "TxBytes": 650093280,
+      "Created": "2026-02-27T13:47:22.680981777Z",
+      "LastWrite": "2026-11-17T16:42:10.762214625+05:30",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "2026-11-18T09:47:49.279734+05:30",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": true,
+      "TaildropTarget": 1,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true
+    },
+    "peer-1": {
+      "ID": "nNode3CNTRL",
+      "NodeID": 1000000000000004,
+      "HostName": "mac-work-rex",
+      "DNSName": "mac-work-rex.example.ts.net.",
+      "OS": "macOS",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.103.75.11",
+        "fd7a:115c:a1e0::c22f:4b0c"
+      ],
+      "AllowedIPs": [
+        "100.103.75.11/32",
+        "fd7a:115c:a1e0::c22f:4b0c/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-10-29T04:53:41.068115167Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 8,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "peer-2": {
+      "ID": "nNode4CNTRL",
+      "NodeID": 1000000000000005,
+      "HostName": "laptop",
+      "DNSName": "laptop.example.ts.net.",
+      "OS": "macOS",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.74.158.32",
+        "fd7a:115c:a1e0::4f2f:9e22"
+      ],
+      "AllowedIPs": [
+        "100.74.158.32/32",
+        "fd7a:115c:a1e0::4f2f:9e22/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-10-18T08:00:14.882670132Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 1,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "peer-3": {
+      "ID": "nNode5CNTRL",
+      "NodeID": 1000000000000006,
+      "HostName": "android-phone",
+      "DNSName": "android-phone.example.ts.net.",
+      "OS": "linux",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.124.19.120",
+        "fd7a:115c:a1e0::e534:137b"
+      ],
+      "AllowedIPs": [
+        "100.124.19.120/32",
+        "fd7a:115c:a1e0::e534:137b/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-08-10T07:36:41.865882472Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 1,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "peer-4": {
+      "ID": "nNode6CNTRL",
+      "NodeID": 1000000000000007,
+      "HostName": "PN64",
+      "DNSName": "pn64.example.ts.net.",
+      "OS": "linux",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.108.241.27",
+        "fd7a:115c:a1e0::cc01:f1aa"
+      ],
+      "AllowedIPs": [
+        "100.108.241.27/32",
+        "fd7a:115c:a1e0::cc01:f1aa/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-02-21T19:44:49.760292914Z",
+      "LastWrite": "2026-11-17T16:31:14.337559958+05:30",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 1,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "peer-5": {
+      "ID": "nNode7CNTRL",
+      "NodeID": 1000000000000008,
+      "HostName": "localhost",
+      "DNSName": "iphone.example.ts.net.",
+      "OS": "iOS",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.103.38.13",
+        "fd7a:115c:a1e0::253a:260d"
+      ],
+      "AllowedIPs": [
+        "100.103.38.13/32",
+        "fd7a:115c:a1e0::253a:260d/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-02-28T06:43:12.32396629Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-11-17T05:19:51.1Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 5,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    },
+    "peer-6": {
+      "ID": "nNode8CNTRL",
+      "NodeID": 1000000000000009,
+      "HostName": "anton-rex",
+      "DNSName": "anton-rex.example.ts.net.",
+      "OS": "linux",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.90.25.52",
+        "fd7a:115c:a1e0::d62f:1935"
+      ],
+      "AllowedIPs": [
+        "100.90.25.52/32",
+        "fd7a:115c:a1e0::d62f:1935/128"
+      ],
+      "RxBytes": 761788,
+      "TxBytes": 906064,
+      "Created": "2026-11-04T03:29:38.108040779Z",
+      "LastWrite": "2026-11-17T16:41:55.873133041+05:30",
+      "LastSeen": "0001-01-01T00:00:00Z",
+      "LastHandshake": "2026-11-18T09:47:31.671145+05:30",
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": true,
+      "TaildropTarget": 8,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": true
+    },
+    "peer-7": {
+      "ID": "nNode9CNTRL",
+      "NodeID": 1000000000000010,
+      "HostName": "desktop",
+      "DNSName": "desktop.example.ts.net.",
+      "OS": "linux",
+      "UserID": 1000000000000002,
+      "TailscaleIPs": [
+        "100.112.174.113",
+        "fd7a:115c:a1e0::7234:ae72"
+      ],
+      "AllowedIPs": [
+        "100.112.174.113/32",
+        "fd7a:115c:a1e0::7234:ae72/128"
+      ],
+      "RxBytes": 0,
+      "TxBytes": 0,
+      "Created": "2026-07-21T05:03:27.418067251Z",
+      "LastWrite": "0001-01-01T00:00:00Z",
+      "LastSeen": "2026-11-02T19:18:42.1Z",
+      "LastHandshake": "0001-01-01T00:00:00Z",
+      "Online": false,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false,
+      "TaildropTarget": 5,
+      "NoFileSharingReason": "",
+      "InNetworkMap": true,
+      "InMagicSock": true,
+      "InEngine": false
+    }
+  },
+  "User": {
+    "1000000000000002": {
+      "ID": 1000000000000002,
+      "LoginName": "user@example.com",
+      "DisplayName": "Example User"
+    }
+  }
+}

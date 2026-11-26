@@ -48,7 +48,7 @@
   const marks = $derived(Map.groupBy(found, (m) => m.cell))
   let dirty = $state(false)
   let status = $state<KernelStatus>('disconnected')
-  let kind = $state<'local' | 'colab'>('local')
+  let kind = $state('local')
   let started = $state<number | null>(null)
   let runtimeName = $state('')
   let usage = $state<ColabInfo | null>(null)

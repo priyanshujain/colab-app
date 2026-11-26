@@ -10,13 +10,21 @@ pub struct Registry {
     ready: HashSet<String>,
 }
 
+pub const LOCAL: &str = "local";
+
+pub fn host_of(label: &str) -> String {
+    let hex = label.strip_prefix("remote-").and_then(|r| r.rsplit_once('-')).map(|(h, _)| h);
+    let bytes = hex.and_then(|h| (0..h.len()).step_by(2).map(|i| h.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok())).collect::<Option<Vec<u8>>>());
+    bytes.and_then(|b| String::from_utf8(b).ok()).unwrap_or_else(|| LOCAL.into())
+}
+
 impl Registry {
-    pub fn owner(&self, path: &str) -> Option<&str> {
-        self.notebooks.iter().find(|(_, p)| *p == path).map(|(l, _)| l.as_str())
+    pub fn owner(&self, host: &str, path: &str) -> Option<&str> {
+        self.notebooks.iter().find(|(l, p)| *p == path && host_of(l) == host).map(|(l, _)| l.as_str())
     }
 
     pub fn claim(&mut self, label: &str, path: &str) -> Option<String> {
-        match self.owner(path) {
+        match self.owner(&host_of(label), path) {
             Some(owner) if owner != label => Some(owner.into()),
             _ => (self.notebooks.insert(label.into(), path.into()), None).1,
         }
@@ -35,12 +43,12 @@ impl Registry {
         self.ready.contains(label) || (self.startup.insert(label.into(), action.into()), false).1
     }
 
-    pub fn place(&mut self, path: &str, windows: &[String], action: &str) -> Place {
-        if let Some(owner) = self.owner(path) {
+    pub fn place(&mut self, host: &str, path: &str, windows: &[String], action: &str) -> Place {
+        if let Some(owner) = self.owner(host, path) {
             return Place::Focus(owner.into());
         }
-        let label = windows.iter().find(|l| self.is_blank(l)).cloned().unwrap_or_else(|| {
-            let label = next_label();
+        let label = windows.iter().find(|l| host_of(l) == host && self.is_blank(l)).cloned().unwrap_or_else(|| {
+            let label = next_label(host);
             self.startup.insert(label.clone(), action.into());
             label
         });
@@ -67,9 +75,10 @@ fn registry<R: Runtime>(app: &AppHandle<R>) -> std::sync::MutexGuard<'_, Registr
     app.state::<Windows>().inner().lock().unwrap()
 }
 
-fn next_label() -> String {
+fn next_label(host: &str) -> String {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
-    format!("window-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    if host == LOCAL { format!("window-{n}") } else { format!("remote-{}-{n}", host.bytes().map(|b| format!("{b:02x}")).collect::<String>()) }
 }
 
 fn build<R: Runtime>(app: &AppHandle<R>, label: &str) -> tauri::Result<()> {
@@ -79,10 +88,11 @@ fn build<R: Runtime>(app: &AppHandle<R>, label: &str) -> tauri::Result<()> {
     builder.build().map(drop)
 }
 
-pub fn create<R: Runtime>(app: &AppHandle<R>, startup: &str) -> tauri::Result<()> {
-    let label = next_label();
+pub fn create<R: Runtime>(app: &AppHandle<R>, host: &str, startup: &str) -> tauri::Result<()> {
+    let label = next_label(host);
     registry(app).startup.insert(label.clone(), startup.into());
-    build(app, &label)
+    build(app, &label)?;
+    Ok(focus(app, &label))
 }
 
 pub fn startup<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String> {
@@ -101,8 +111,8 @@ pub fn claim<R: Runtime>(app: &AppHandle<R>, label: &str, path: &str) -> bool {
     owner.map(|o| focus(app, &o)).is_none()
 }
 
-fn focus_owner<R: Runtime>(app: &AppHandle<R>, path: &str) -> bool {
-    let owner = registry(app).owner(path).map(String::from);
+pub fn focus_owner<R: Runtime>(app: &AppHandle<R>, host: &str, path: &str) -> bool {
+    let owner = registry(app).owner(host, path).map(String::from);
     owner.map(|o| focus(app, &o)).is_some()
 }
 
@@ -115,23 +125,47 @@ fn focused<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
     app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false))
 }
 
-pub fn menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    if id.strip_prefix("open-recent:").is_some_and(|path| focus_owner(app, path)) {
+pub fn menu<R: Runtime>(app: &AppHandle<R>, host: &str, id: &str) {
+    if id.strip_prefix("open-recent:").is_some_and(|path| focus_owner(app, host, path)) {
         return;
     }
-    let result = match focused(app) {
+    let result = match focused(app).filter(|w| host_of(w.label()) == host) {
         Some(window) => send(app, &window, id),
-        None => create(app, id),
+        None => create(app, host, id),
     };
     let _ = result.map_err(|e| log::error!("menu {id}: {e}"));
 }
 
-pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
+pub fn settings<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    let window = focused(app).filter(|w| host_of(w.label()) == LOCAL).or_else(|| app.webview_windows().into_values().find(|w| host_of(w.label()) == LOCAL));
+    let result = match window {
+        Some(window) => send(app, &window, id).map(|()| focus(app, window.label())),
+        None => create(app, LOCAL, id),
+    };
+    let _ = result.map_err(|e| log::error!("settings: {e}"));
+}
+
+fn settings_file<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
+    app.path().app_data_dir().unwrap_or_default().join("app.json")
+}
+
+pub fn opens_agent_notebooks<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let settings: serde_json::Value = std::fs::read_to_string(settings_file(app)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    settings["open_agent_notebooks"].as_bool().unwrap_or(false)
+}
+
+pub fn set_opens_agent_notebooks<R: Runtime>(app: &AppHandle<R>, on: bool) -> std::io::Result<()> {
+    let file = settings_file(app);
+    std::fs::create_dir_all(file.parent().unwrap_or(&file))?;
+    std::fs::write(file, serde_json::json!({"open_agent_notebooks": on}).to_string())
+}
+
+pub fn agent_open<R: Runtime>(app: &AppHandle<R>, host: &str, path: &str) {
     let mut windows: Vec<_> = app.webview_windows().into_values().collect();
     windows.sort_by_key(|w| !w.is_focused().unwrap_or(false));
     let labels: Vec<_> = windows.iter().map(|w| w.label().to_string()).collect();
     let action = format!("open-recent:{path}");
-    let place = registry(app).place(path, &labels, &action);
+    let place = registry(app).place(host, path, &labels, &action);
     let result = match place {
         Place::Focus(owner) => Ok(focus(app, &owner)),
         Place::Load(label) => match app.get_webview_window(&label) {
@@ -142,11 +176,15 @@ pub fn agent_open<R: Runtime>(app: &AppHandle<R>, path: &str) {
     let _ = result.map_err(|e| log::error!("agent open {path}: {e}"));
 }
 
-pub fn agent_close<R: Runtime>(app: &AppHandle<R>, path: &str) {
-    let owner = registry(app).owner(path).map(String::from);
+pub fn agent_close<R: Runtime>(app: &AppHandle<R>, host: &str, path: &str) {
+    let owner = registry(app).owner(host, path).map(String::from);
     if let Some(window) = owner.and_then(|o| app.get_webview_window(&o)) {
         let _ = app.run_on_main_thread(move || { let _ = window.close().map_err(|e| log::error!("agent close: {e}")); }).map_err(|e| log::error!("agent close: {e}"));
     }
+}
+
+pub fn paths<R: Runtime>(app: &AppHandle<R>, host: &str) -> Vec<String> {
+    registry(app).notebooks.iter().filter(|(l, _)| host_of(l) == host).map(|(_, p)| p.clone()).collect()
 }
 
 pub fn closed<R: Runtime>(app: &AppHandle<R>, label: &str) {
@@ -165,13 +203,13 @@ mod tests {
         assert_eq!(r.claim("window-1", "/nb/eval.ipynb"), None);
         assert_eq!(r.claim("main", "/nb/train.ipynb"), None);
         assert_eq!(r.claim("main", "/nb/data.ipynb"), None);
-        assert_eq!(r.owner("/nb/train.ipynb"), None);
+        assert_eq!(r.owner(LOCAL, "/nb/train.ipynb"), None);
         r.startup.insert("window-2".into(), "open-recent:/nb/data.ipynb".into());
         assert!(!r.is_blank("main") && !r.is_blank("window-2") && r.is_blank("window-3"));
         r.close("window-1");
         assert!(r.is_blank("window-1"));
         assert_eq!(r.claim("window-3", "/nb/eval.ipynb"), None);
-        assert_eq!(r.owner("/nb/eval.ipynb"), Some("window-3"));
+        assert_eq!(r.owner(LOCAL, "/nb/eval.ipynb"), Some("window-3"));
     }
 
     #[test]
@@ -192,17 +230,33 @@ mod tests {
         let mut r = Registry::default();
         r.take_startup("main");
         let windows = vec!["main".to_string()];
-        assert_eq!(r.place("/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Load("main".into()));
-        let Place::Load(second) = r.place("/nb/eval.ipynb", &windows, "open-recent:/nb/eval.ipynb") else { panic!("eval was not given a window") };
+        assert_eq!(r.place(LOCAL, "/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Load("main".into()));
+        let Place::Load(second) = r.place(LOCAL, "/nb/eval.ipynb", &windows, "open-recent:/nb/eval.ipynb") else { panic!("eval was not given a window") };
         assert_ne!(second, "main");
         assert_eq!(r.take_startup(&second).as_deref(), Some("open-recent:/nb/eval.ipynb"));
-        assert_eq!(r.place("/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Focus("main".into()));
+        assert_eq!(r.place(LOCAL, "/nb/train.ipynb", &windows, "open-recent:/nb/train.ipynb"), Place::Focus("main".into()));
         assert_eq!(r.claim("main", "/nb/train.ipynb"), None);
         assert_eq!(r.claim(&second, "/nb/eval.ipynb"), None);
         let windows = vec!["main".to_string(), second.clone()];
-        let Place::Load(third) = r.place("/nb/data.ipynb", &windows, "open-recent:/nb/data.ipynb") else { panic!("data was not given a window") };
+        let Place::Load(third) = r.place(LOCAL, "/nb/data.ipynb", &windows, "open-recent:/nb/data.ipynb") else { panic!("data was not given a window") };
         assert!(!windows.contains(&third));
         r.close("main");
-        assert_eq!(r.place("/nb/train.ipynb", &[second.clone(), "window-blank".into()], "open-recent:/nb/train.ipynb"), Place::Load("window-blank".into()));
+        assert_eq!(r.place(LOCAL, "/nb/train.ipynb", &[second.clone(), "window-blank".into()], "open-recent:/nb/train.ipynb"), Place::Load("window-blank".into()));
+    }
+
+    #[test]
+    fn the_same_path_on_two_hosts_opens_in_two_windows_and_events_find_the_right_one() {
+        let mut r = Registry::default();
+        let gpu = next_label("gpu box");
+        assert!(gpu.starts_with("remote-") && !gpu.contains(' '), "{gpu}");
+        assert_eq!((host_of(&gpu).as_str(), host_of("main").as_str(), host_of("window-4").as_str(), host_of("remote-zz-3").as_str()), ("gpu box", LOCAL, LOCAL, LOCAL));
+        assert_eq!(r.claim("main", "/home/pj/train.ipynb"), None);
+        assert_eq!(r.claim(&gpu, "/home/pj/train.ipynb"), None);
+        assert_eq!(r.owner("gpu box", "/home/pj/train.ipynb"), Some(gpu.as_str()));
+        assert_eq!(r.owner(LOCAL, "/home/pj/train.ipynb"), Some("main"));
+        let windows = vec!["main".to_string(), gpu.clone(), "window-blank".to_string()];
+        let Place::Load(label) = r.place("gpu box", "/home/pj/eval.ipynb", &windows, "open-recent:/home/pj/eval.ipynb") else { panic!("eval was not given a window") };
+        assert_eq!(host_of(&label), "gpu box");
+        assert_eq!(r.place(LOCAL, "/home/pj/eval.ipynb", &windows, "open-recent:/home/pj/eval.ipynb"), Place::Load("window-blank".into()));
     }
 }

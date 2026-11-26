@@ -28,6 +28,7 @@ pub enum CellEdit {
 pub enum KernelChoice {
     Local,
     Colab { variant: Variant, accelerator: Option<String>, high_ram: bool },
+    Remote { host: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -138,6 +139,74 @@ pub mod events {
     pub const AUTH_STATE: &str = "auth-state";
     pub const COMM: &str = "comm";
     pub const SAVE_STATE: &str = "save-state";
+    pub const TAILSCALE_STATUS: &str = "tailscale-status";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TailscaleState {
+    Off,
+    Starting,
+    NeedsLogin,
+    Running,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TailscaleStatus {
+    pub state: TailscaleState,
+    pub hostname: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dns_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub login_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auth_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostPath {
+    Direct,
+    Relay,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct KernelType {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Machine {
+    pub name: String,
+    pub kernels: Vec<KernelType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostStatus {
+    pub label: String,
+    pub address: String,
+    pub available: bool,
+    pub kernels: Vec<KernelType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<HostPath>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub latency_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -1,4 +1,4 @@
-use crate::client::{Colab, Runtime, Variant};
+use crate::client::{Colab, JupyterServer, RemoteHost, Runtime, Socks, Variant, not_found};
 use crate::store;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -6,7 +6,7 @@ use futures::stream::BoxStream;
 use futures::{SinkExt, StreamExt};
 use kernel::{Content, ExecutionState, Execution, Kernel, KernelStatus, Message};
 use reqwest::Method;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,6 +18,7 @@ const RECONNECT_ATTEMPTS: u32 = 60;
 const MISSED_PINGS: u32 = 3;
 const KERNEL_CREATE_RETRIES: u32 = 10;
 const LOG_HOOK: &str = include_str!("log_hook.py");
+pub const RECENT_IDS: usize = 1 << 16;
 
 enum Command {
     Send(tungstenite::Message),
@@ -29,7 +30,7 @@ struct Shared {
     status: Mutex<KernelStatus>,
     executions: Mutex<HashMap<String, mpsc::UnboundedSender<Message>>>,
     events: broadcast::Sender<Message>,
-    seen: Mutex<std::collections::VecDeque<String>>,
+    seen: Mutex<(HashSet<String>, VecDeque<String>)>,
     logged: Mutex<Option<u64>>,
 }
 
@@ -39,8 +40,10 @@ impl Shared {
     }
 }
 
-pub struct ColabKernel {
-    pub runtime: Arc<Runtime>,
+pub type ColabKernel = JupyterKernel<Runtime>;
+
+pub struct JupyterKernel<S: JupyterServer> {
+    pub runtime: Arc<S>,
     pub kernel_id: String,
     pub session: String,
     pub assigned: Option<chrono::DateTime<chrono::Utc>>,
@@ -66,7 +69,7 @@ impl Colab {
             Ok(k) if k["id"].is_string() => {
                 let kernel_id = k["id"].as_str().unwrap().to_string();
                 store::save(&store::default_path(), notebook, &store::Saved { endpoint: a.endpoint.clone(), kernel_id: kernel_id.clone(), assigned })?;
-                Ok(ColabKernel::connect(runtime, kernel_id, assigned, notebook))
+                Ok(JupyterKernel::connect(runtime, kernel_id, assigned, notebook))
             }
             other => {
                 self.unassign(&a.endpoint).await?;
@@ -77,23 +80,45 @@ impl Colab {
 
     pub async fn reattach(&self, notebook: &Path) -> Result<Option<ColabKernel>> {
         let path = store::default_path();
-        let Some(saved) = store::get(&path, notebook)? else { return Ok(None) };
+        let Some(saved) = store::get::<store::Saved>(&path, notebook)? else { return Ok(None) };
         let assignment = self.assignments().await?.into_iter().find(|a| a.endpoint == saved.endpoint);
         let Some(a) = assignment else {
             store::remove(&path, notebook)?;
             return Ok(None);
         };
         let runtime = Arc::new(Runtime::new(self.clone(), a.endpoint, &a.runtime_proxy_info));
-        if runtime.jupyter(Method::GET, &format!("/api/kernels/{}", saved.kernel_id)).await.is_err() {
-            store::remove(&path, notebook)?;
-            return Ok(None);
+        match runtime.jupyter(Method::GET, &format!("/api/kernels/{}", saved.kernel_id)).await {
+            Err(e) if not_found(&e) => {
+                store::remove(&path, notebook)?;
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+            Ok(_) => {}
         }
-        Ok(Some(ColabKernel::connect(runtime, saved.kernel_id, saved.assigned, notebook)))
+        Ok(Some(JupyterKernel::connect(runtime, saved.kernel_id, saved.assigned, notebook)))
     }
 }
 
-impl ColabKernel {
-    pub fn connect(runtime: Arc<Runtime>, kernel_id: String, assigned: Option<chrono::DateTime<chrono::Utc>>, notebook: &Path) -> Self {
+impl RemoteHost {
+    pub async fn start(self: Arc<Self>, notebook: &Path, project: &str) -> Result<JupyterKernel<RemoteHost>> {
+        let (url, _) = self.url_and_headers().await?;
+        let response = self.http().post(format!("{url}/api/kernels")).json(&serde_json::json!({"name": "python3", "path": project})).send().await?;
+        if !response.status().is_success() {
+            bail!("remote host {}: {}", self.label, response.text().await?);
+        }
+        let k: serde_json::Value = response.json().await?;
+        let kernel_id = k["id"].as_str().context("creating a kernel returned no id")?.to_string();
+        Ok(JupyterKernel::connect(self, kernel_id, None, notebook))
+    }
+
+    pub async fn attach(self: Arc<Self>, kernel_id: &str, notebook: &Path) -> Result<JupyterKernel<RemoteHost>> {
+        self.jupyter(Method::GET, &format!("/api/kernels/{kernel_id}")).await?;
+        Ok(JupyterKernel::connect(self, kernel_id.into(), None, notebook))
+    }
+}
+
+impl<S: JupyterServer> JupyterKernel<S> {
+    pub fn connect(runtime: Arc<S>, kernel_id: String, assigned: Option<chrono::DateTime<chrono::Utc>>, notebook: &Path) -> Self {
         let shared = Arc::new(Shared { status: Mutex::new(KernelStatus::Connecting), executions: Mutex::default(), events: broadcast::channel(1024).0, seen: Mutex::default(), logged: Mutex::default() });
         let (commands, rx) = mpsc::unbounded_channel();
         let session = uuid::Uuid::new_v4().to_string();
@@ -109,6 +134,12 @@ impl ColabKernel {
         let _ = self.commands.send(Command::Reconnect);
     }
 
+    fn kernel_path(&self, action: &str) -> String {
+        format!("/api/kernels/{}{action}", self.kernel_id)
+    }
+}
+
+impl ColabKernel {
     pub fn detach(self) -> Result<()> {
         let _ = self.commands.send(Command::Close);
         store::save(&store::default_path(), &self.notebook, &store::Saved { endpoint: self.runtime.endpoint.clone(), kernel_id: self.kernel_id.clone(), assigned: self.assigned })
@@ -119,14 +150,10 @@ impl ColabKernel {
         store::remove(&store::default_path(), &self.notebook)?;
         self.runtime.colab.unassign(&self.runtime.endpoint).await
     }
-
-    fn kernel_path(&self, action: &str) -> String {
-        format!("/api/kernels/{}{action}", self.kernel_id)
-    }
 }
 
 #[async_trait]
-impl Kernel for ColabKernel {
+impl<S: JupyterServer> Kernel for JupyterKernel<S> {
     async fn execute(&self, code: &str) -> Result<Execution> {
         let msg = Message::execute_request(&self.session, code);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -174,14 +201,14 @@ fn tokio_stream(rx: mpsc::UnboundedReceiver<Message>) -> Execution {
     futures::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|m| (m, rx)) }).boxed()
 }
 
-async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Command>) {
+async fn run<S: JupyterServer>(runtime: Arc<S>, kernel_id: String, session: String, shared: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Command>) {
     let mut unsent: Option<tungstenite::Message> = None;
     let mut failures = 0;
     let mut next = None;
     loop {
         let opened = match next.take() {
             Some(ws) => Ok(ws),
-            None => open(&runtime, &kernel_id, &session).await,
+            None => open(&*runtime, &kernel_id, &session).await,
         };
         let ws = match opened {
             Ok(ws) => ws,
@@ -199,14 +226,14 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
         };
         log::info!("kernel {kernel_id} websocket connected");
         failures = 0;
-        shared.set(remote_status(&runtime, &kernel_id).await.unwrap_or(KernelStatus::Idle));
-        backfill(&runtime, &kernel_id, &shared).await;
+        shared.set(remote_status(&*runtime, &kernel_id).await.unwrap_or(KernelStatus::Idle));
+        backfill(&*runtime, &kernel_id, &shared).await;
         let (mut sink, mut stream) = ws.split();
         if let Some(frame) = unsent.take() && sink.send(frame.clone()).await.is_err() {
             unsent = Some(frame);
             continue;
         }
-        if let Ok(hook) = encode(log_hook(&session, &kernel_id)) && sink.send(hook).await.is_err() {
+        if runtime.logs() && let Ok(hook) = encode(log_hook(&session, &kernel_id)) && sink.send(hook).await.is_err() {
             continue;
         }
         let mut ping = tokio::time::interval(PING_INTERVAL);
@@ -219,7 +246,8 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
                         break;
                     },
                     Some(Command::Reconnect) => {
-                        next = open(&runtime, &kernel_id, &session).await.ok();
+                        shared.set(KernelStatus::Reconnecting);
+                        next = tokio::time::timeout(PING_INTERVAL, open(&*runtime, &kernel_id, &session)).await.ok().and_then(Result::ok);
                         let drain = async {
                             while let Some(Ok(frame)) = stream.next().await {
                                 if let Ok(msg) = decode(&frame) {
@@ -251,8 +279,8 @@ async fn run(runtime: Arc<Runtime>, kernel_id: String, session: String, shared: 
                         break;
                     }
                     let waiting = !shared.executions.lock().unwrap().is_empty();
-                    if waiting && message.elapsed() >= PING_INTERVAL && remote_status(&runtime, &kernel_id).await == Some(KernelStatus::Idle) {
-                        backfill(&runtime, &kernel_id, &shared).await;
+                    if waiting && runtime.logs() && message.elapsed() >= PING_INTERVAL && remote_status(&*runtime, &kernel_id).await == Some(KernelStatus::Idle) {
+                        backfill(&*runtime, &kernel_id, &shared).await;
                         shared.set(KernelStatus::Idle);
                         shared.executions.lock().unwrap().clear();
                     }
@@ -276,13 +304,13 @@ fn log_path(kernel_id: &str) -> String {
     format!("/tmp/colab-app/{kernel_id}.jsonl")
 }
 
-async fn backfill(runtime: &Runtime, kernel_id: &str, shared: &Shared) {
+async fn backfill<S: JupyterServer>(runtime: &S, kernel_id: &str, shared: &Shared) {
     let Some(offset) = *shared.logged.lock().unwrap() else { return };
     let Ok(Ok(text)) = tokio::time::timeout(PING_INTERVAL, runtime.file_from(&log_path(kernel_id), offset)).await else { return };
     text.lines().filter_map(|line| serde_json::from_str(line).ok()).for_each(|msg| route(shared, msg));
 }
 
-async fn remote_status(runtime: &Runtime, kernel_id: &str) -> Option<KernelStatus> {
+async fn remote_status<S: JupyterServer>(runtime: &S, kernel_id: &str) -> Option<KernelStatus> {
     let kernel = tokio::time::timeout(PING_INTERVAL, runtime.jupyter(Method::GET, &format!("/api/kernels/{kernel_id}"))).await.ok()?.ok()?;
     Some(match kernel["execution_state"].as_str()? {
         "busy" => KernelStatus::Busy,
@@ -291,12 +319,24 @@ async fn remote_status(runtime: &Runtime, kernel_id: &str) -> Option<KernelStatu
     })
 }
 
-async fn open(runtime: &Runtime, kernel_id: &str, session: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
-    let (url, token) = runtime.url_and_token().await?;
+pub type WebSocket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn open<S: JupyterServer>(runtime: &S, kernel_id: &str, session: &str) -> Result<WebSocket> {
+    let (url, headers) = runtime.url_and_headers().await?;
     let ws_url = format!("{}/api/kernels/{kernel_id}/channels?session_id={session}", url.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1));
     let mut request = ws_url.into_client_request()?;
-    request.headers_mut().insert("X-Colab-Runtime-Proxy-Token", token.parse()?);
-    Ok(tokio_tungstenite::connect_async(request).await?.0)
+    for (k, v) in headers {
+        request.headers_mut().insert(k, v.parse()?);
+    }
+    websocket(request, runtime.socks().as_ref()).await
+}
+
+pub async fn websocket(request: tungstenite::handshake::client::Request, socks: Option<&Socks>) -> Result<WebSocket> {
+    let Some(s) = socks else { return Ok(tokio_tungstenite::connect_async(request).await?.0) };
+    let host = request.uri().host().context("websocket url has no host")?.trim_matches(['[', ']']).to_string();
+    let port = request.uri().port_u16().unwrap_or(80);
+    let tcp = tokio_socks::tcp::Socks5Stream::connect_with_password(s.addr.as_str(), (host.as_str(), port), &s.user, &s.password).await?.into_inner();
+    Ok(tokio_tungstenite::client_async_tls(request, tcp).await?.0)
 }
 
 pub fn encode(mut msg: Message) -> Result<tungstenite::Message> {
@@ -338,15 +378,15 @@ fn route(shared: &Shared, msg: Message) {
         let mut logged = shared.logged.lock().unwrap();
         *logged = Some(logged.map_or(offset, |l| l.max(offset)));
     }
-    {
-        let mut seen = shared.seen.lock().unwrap();
-        if seen.contains(&msg.header.msg_id) {
+    if !msg.header.msg_id.is_empty() {
+        let (ids, order) = &mut *shared.seen.lock().unwrap();
+        if !ids.insert(msg.header.msg_id.clone()) {
             return;
         }
-        if seen.len() >= 4096 {
-            seen.pop_front();
+        order.push_back(msg.header.msg_id.clone());
+        if order.len() > RECENT_IDS && let Some(old) = order.pop_front() {
+            ids.remove(&old);
         }
-        seen.push_back(msg.header.msg_id.clone());
     }
     if let Content::Status { execution_state } = msg.typed() {
         shared.set(match execution_state {

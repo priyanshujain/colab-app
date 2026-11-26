@@ -1,11 +1,11 @@
-use colab_app_lib::engine::{Core, Emit};
+use colab_server::engine::{Core, Emit};
 use nb::Output;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 async fn run(core: &Arc<Core>, path: &str, id: &str, source: &str) -> String {
-    core.edit_cell(path, colab_app_lib::ipc::CellEdit::Source { cell_id: id.into(), source: source.into() }).await.unwrap();
+    core.edit_cell(path, colab_server::ipc::CellEdit::Source { cell_id: id.into(), source: source.into() }).await.unwrap();
     let cell = core.agent_run(path, id).await.unwrap();
     cell.outputs.unwrap().iter().map(|o| match o {
         Output::Stream { text, .. } => text.clone(),
@@ -51,7 +51,7 @@ async fn saved_secrets_reach_local_kernels_through_colab_userdata_and_env() {
 
     core.delete_secret("AWS_REGION").await.unwrap();
     assert!(core.list_secrets().await.unwrap().is_empty());
-    keyring::Entry::new(&service, "secrets").unwrap().delete_credential().unwrap();
+    colab::keystore::Entry::new(&service, "secrets", "secrets.json").delete().unwrap();
 }
 
 fn py_repr(s: &str) -> String {
